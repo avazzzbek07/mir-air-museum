@@ -699,7 +699,7 @@ function toggleFree() {
   $("freeHelp").hidden = !free; $("pad").hidden = !(free && coarse);
   $("walkBtn").textContent = free ? t("walk.exit") : t("walk");
   if (!camera) return;
-  if (free) { const dir = new THREE.Vector3(); camera.getWorldDirection(dir); look.yaw = Math.atan2(-dir.x, -dir.z); look.pitch = Math.asin(dir.y); camera.position.y = 1.75; }
+  if (free) { const dir = new THREE.Vector3(); camera.getWorldDirection(dir); look.yaw = Math.atan2(-dir.x, -dir.z); look.pitch = Math.asin(dir.y); camera.position.y = 1.75; snapInside(camera.position); }
   else { keys.clear(); prog = scrollProg(); }
 }
 $("walkBtn").addEventListener("click", toggleFree);
@@ -984,7 +984,8 @@ async function startMuseum() {
   const endDrag = () => (drag = null);
   canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
   document.querySelectorAll("#pad button").forEach((b) => {
-    const k = b.dataset.k;
+    // on the touch pad ← → turn the view (strafing feels broken on a phone); ↑ ↓ walk
+    const k = { l: "tl", r: "tr" }[b.dataset.k] || b.dataset.k;
     b.addEventListener("pointerdown", (e) => { e.preventDefault(); keys.add(k); b.setPointerCapture(e.pointerId); });
     const up = () => keys.delete(k);
     b.addEventListener("pointerup", up); b.addEventListener("pointercancel", up); b.addEventListener("lostpointercapture", up);
@@ -1010,10 +1011,19 @@ function inside(x, z) {
   if (z <= HALL_START + 6 && z >= HALL_END - 0.5 && Math.abs(x) <= OUTER - 0.5) return !EX_Z.some((ez, i) => Math.abs(z - ez) < 1.0 && Math.abs(x - (i % 2 ? 2.7 : -2.7)) < 1.0);
   const dz = z - RZ; return Math.hypot(x, dz) < RR - 2.3 && Math.hypot(x, dz + 1) > 1.8;
 }
+// The tour camera can stand outside the walkable area (the entrance stop is behind the hall start);
+// free walk starts from the nearest point inside, otherwise every step is rejected.
+function snapInside(p) {
+  if (inside(p.x, p.z)) return;
+  p.x = Math.max(-(OUTER - 1), Math.min(OUTER - 1, p.x)); p.z = Math.min(p.z, HALL_START + 5);
+  if (!inside(p.x, p.z)) { p.x = 0; p.z = Math.min(p.z, HALL_START + 5); }
+  if (!inside(p.x, p.z)) { p.x = 0; p.z = HALL_START; }
+}
 function walk(dt) {
+  if (keys.has("tl")) look.yaw += 1.9 * dt; if (keys.has("tr")) look.yaw -= 1.9 * dt;
   const speed = 4.2 * dt, fw = new THREE.Vector3(-Math.sin(look.yaw), 0, -Math.cos(look.yaw)), rt = new THREE.Vector3(-fw.z, 0, fw.x), mv = new THREE.Vector3();
   if (keys.has("f")) mv.add(fw); if (keys.has("b")) mv.sub(fw); if (keys.has("r")) mv.add(rt); if (keys.has("l")) mv.sub(rt);
-  if (mv.lengthSq()) { mv.normalize().multiplyScalar(speed); const p = camera.position; if (inside(p.x + mv.x, p.z)) p.x += mv.x; if (inside(p.x, p.z + mv.z)) p.z += mv.z; }
+  if (mv.lengthSq()) { mv.normalize().multiplyScalar(speed); const p = camera.position, out = !inside(p.x, p.z); if (out || inside(p.x + mv.x, p.z)) p.x += mv.x; if (out || inside(p.x, p.z + mv.z)) p.z += mv.z; }
   camera.position.y += (1.75 - camera.position.y) * 0.1; camera.rotation.set(look.pitch, look.yaw, 0, "YXZ");
 }
 function updateUI(p) {
