@@ -15,7 +15,7 @@ const BOT_URL = SITE.bot ? `https://t.me/${SITE.bot}` : "";
 const FEATURED = ["starys", "cyberbuddy", "esp32-mini-radar", "glove-mouse", "smartsprout", "pixie", "esp32-rc-car", "kamkor", "sunflower"];
 const MODEL = { kamkor: "kamkor", sunflower: "sunflower" };
 
-const S = { dyn: [], profiles: [], news: [], counts: {}, loaded: false, offline: !FB, user: null, me: null, scope: "" };
+const S = { dyn: [], profiles: [], news: [], counts: {}, votes: {}, loaded: false, offline: !FB, user: null, me: null, scope: "" };
 let LIKED = new Set();
 try { LIKED = new Set(JSON.parse(localStorage.getItem("mirair-liked") || "[]")); } catch (e) {}
 
@@ -42,7 +42,7 @@ const loadPromise = (async () => {
     const d = await FB.loadPublic();
     S.dyn = d.projects.map(normalize).sort((a, b) => b.created - a.created);
     S.profiles = d.profiles.sort((a, b) => a.name.localeCompare(b.name, "ru"));
-    S.news = d.news; S.counts = d.counts;
+    S.news = d.news; S.counts = d.counts; S.votes = d.votes;
   } catch (e) { console.warn(e); S.offline = true; }
   S.loaded = true;
   if (!museumOn) route(true);
@@ -635,8 +635,8 @@ async function doLike(id) {
   const btns = () => document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`);
   btns().forEach((b) => (b.disabled = true));
   try {
-    const n = await FB.like(id);
-    S.counts[id] = n; LIKED.add(id);
+    const { n, v } = await FB.like(id, !!(S.user?.emailVerified && S.me?.status === "approved"));
+    S.counts[id] = n; S.votes[id] = v; LIKED.add(id);
     try { localStorage.setItem("mirair-liked", JSON.stringify([...LIKED])); } catch (e) {}
     btns().forEach((b) => { b.setAttribute("aria-pressed", "true"); b.title = t("liked"); b.querySelector("span").textContent = n; });
   } catch (e) { console.warn(e); toast(t("like.err")); }
@@ -724,9 +724,10 @@ async function startMuseum() {
   started = true;
   // wait briefly for approved student projects so they get their own halls
   await Promise.race([loadPromise, new Promise((r) => setTimeout(r, 3000))]);
-  // the most liked projects take the first halls; ties keep the order: new student projects, then FEATURED
+  // projects with the most student likes (S.votes, not guest likes) take the first halls;
+  // ties keep the order: new student projects, then FEATURED
   const pool = [...S.dyn.filter((p) => p.photos?.length && p.type !== "idea"), ...HALLS];
-  HALLS = pool.map((p, i) => [p, i]).sort((a, b) => (S.counts[b[0].id] || 0) - (S.counts[a[0].id] || 0) || a[1] - b[1]).map(([p]) => p).slice(0, 14);
+  HALLS = pool.map((p, i) => [p, i]).sort((a, b) => (S.votes[b[0].id] || 0) - (S.votes[a[0].id] || 0) || a[1] - b[1]).map(([p]) => p).slice(0, 14);
   layout(); sizeTrack(); renderRail();
   if (museumOn && /^#hall-\d+$/.test(location.hash)) goStop(Math.min(+location.hash.slice(6), N - 1), true);
 

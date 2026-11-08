@@ -147,12 +147,22 @@ service cloud.firestore {
         && existsAfter(/databases/$(database)/documents/likes/$(project + '_' + device))
         && !exists(/databases/$(database)/documents/likes/$(project + '_' + device));
     }
+    // `n` counts every like; `v` counts likes from students (confirmed email + approved profile)
+    // and is what orders the museum halls, so anonymous likes can't push a project forward.
+    function student() {
+      return verified() && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && exists(/databases/$(database)/documents/profiles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.status == 'approved';
+    }
     match /likeCounts/{project} {
       allow read: if true;
-      allow create: if request.resource.data.keys().hasOnly(['n', 'last'])
-        && request.resource.data.n == 1 && newLike(project, request.resource.data.last);
-      allow update: if request.resource.data.keys().hasOnly(['n', 'last'])
-        && request.resource.data.n == resource.data.n + 1 && newLike(project, request.resource.data.last);
+      allow create: if request.resource.data.keys().hasOnly(['n', 'v', 'last'])
+        && request.resource.data.n == 1 && request.resource.data.v == (student() ? 1 : 0)
+        && newLike(project, request.resource.data.last);
+      allow update: if request.resource.data.keys().hasOnly(['n', 'v', 'last'])
+        && request.resource.data.n == resource.data.n + 1
+        && request.resource.data.v == resource.data.get('v', 0) + (student() ? 1 : 0)
+        && newLike(project, request.resource.data.last);
     }
 
     // ---------- news and events ----------

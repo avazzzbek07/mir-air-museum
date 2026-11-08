@@ -42,13 +42,15 @@ export function modScope(user) {
 const rows = (snap) => snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 export async function loadPublic() {
-  const [projects, profiles, news, counts] = await withTimeout(Promise.all([
+  const [projects, profiles, news, likeDocs] = await withTimeout(Promise.all([
     getDocs(query(collection(db, "projects"), where("status", "==", "approved"))).then(rows),
     getDocs(query(collection(db, "profiles"), where("status", "==", "approved"))).then(rows),
     getDocs(collection(db, "news")).then(rows),
-    getDocs(collection(db, "likeCounts")).then((s) => Object.fromEntries(s.docs.map((d) => [d.id, d.data().n || 0]))),
+    getDocs(collection(db, "likeCounts")).then((s) => s.docs.map((d) => [d.id, d.data()])),
   ]), 8000);
-  return { projects, profiles, news, counts };
+  const counts = Object.fromEntries(likeDocs.map(([id, d]) => [id, d.n || 0]));
+  const votes = Object.fromEntries(likeDocs.map(([id, d]) => [id, d.v || 0]));
+  return { projects, profiles, news, counts, votes };
 }
 
 /* ---------- profiles ---------- */
@@ -120,17 +122,20 @@ export async function setStatus(coll, id, status) { await freshToken(); return u
 /* ---------- likes: one per account per project, counter raised in the same transaction ----------
    Visitors without an account get an anonymous Firebase account on their first like, so every like
    is tied to a uid the rules can check instead of a code the browser makes up. */
-export async function like(project) {
+// `student` must match student() in firestore.rules: a confirmed email and an approved profile.
+export async function like(project, student) {
   if (!auth.currentUser) await signInAnonymously(auth);
+  if (student) await freshToken();
   const device = auth.currentUser.uid;
   const likeRef = doc(db, "likes", `${project}_${device}`), cRef = doc(db, "likeCounts", project);
   return runTransaction(db, async (tx) => {
     const [l, c] = await Promise.all([tx.get(likeRef), tx.get(cRef)]);
-    if (l.exists()) return c.exists() ? c.data().n : 1;
-    const n = (c.exists() ? c.data().n : 0) + 1;
+    const old = c.exists() ? c.data() : { n: 0, v: 0 };
+    if (l.exists()) return { n: old.n || 1, v: old.v || 0 };
+    const n = (old.n || 0) + 1, v = (old.v || 0) + (student ? 1 : 0);
     tx.set(likeRef, { project, device, at: serverTimestamp() });
-    tx.set(cRef, { n, last: device });
-    return n;
+    tx.set(cRef, { n, v, last: device });
+    return { n, v };
   });
 }
 
