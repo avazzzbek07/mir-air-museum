@@ -688,8 +688,9 @@ $("menuBtn").addEventListener("click", () => { const o = $("nav").classList.togg
    3D museum: a night lab with neon lines and Kyrgyz ornament
    ============================================================ */
 const coarse = matchMedia("(pointer: coarse)").matches;
-// weak phones: no antialiasing or soft shadows, native-ish resolution
-const lowPower = coarse && ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4);
+// weak phones (Android Chrome reports deviceMemory; ≤2 GB): no antialiasing or soft shadows, lower resolution.
+// hardwareConcurrency is not used: iPhones under-report it for privacy and would lose antialiasing.
+const lowPower = coarse && navigator.deviceMemory !== undefined && navigator.deviceMemory < 4;
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const narrow = () => innerWidth < 720;
 let free = false, started = false, renderer = null, currentStop = -1;
@@ -795,31 +796,60 @@ async function startMuseum() {
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
 
-  /* textures: dark tiles with instrument grid, and the gold ram-horn (кочкор мүйүз) ornament band */
+  /* textures: dark tiles with instrument grid, and the gold ram-horn (кочкор мүйүз) ornament */
+  // ram-horn motif: a stem that forks into two horns winding into spirals, with two small curls below;
+  // up = 1 grows upward from (x, y + s), up = -1 hangs downward. Same math as the CSS ornaments in index.html.
+  function spiralTo(g, cx, cy, r0, a0, d, turns) {
+    for (let k = 0; k <= 48; k++) { const t = k / 48, a = a0 + d * turns * Math.PI * 2 * t, r = r0 * (1 - 0.82 * t); g.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a)); }
+  }
+  function hornMotif(g, x, y, s, up = 1) {
+    g.beginPath(); g.moveTo(x, y + up * s * 0.95); g.lineTo(x, y);
+    spiralTo(g, x - s / 2, y, s / 2, 0, -up, 1.55);
+    g.moveTo(x, y); spiralTo(g, x + s / 2, y, s / 2, Math.PI, up, 1.55);
+    const yb = y + up * s * 0.55;
+    g.moveTo(x, yb); spiralTo(g, x - s * 0.27, yb, s * 0.27, 0, up, 1.15);
+    g.moveTo(x, yb); spiralTo(g, x + s * 0.27, yb, s * 0.27, Math.PI, -up, 1.15);
+    g.stroke();
+  }
+  const rhomb = (g, x, y, r) => { g.beginPath(); g.moveTo(x, y - r); g.lineTo(x + r, y); g.lineTo(x, y + r); g.lineTo(x - r, y); g.closePath(); g.stroke(); };
+  // rosette: n horn motifs growing outward around a rhombus, inside two rings
+  function rosetteCanvas(size, n, ring) {
+    const c = document.createElement("canvas"); c.width = c.height = size; const g = c.getContext("2d"), h = size / 2;
+    g.fillStyle = "#000"; g.fillRect(0, 0, size, size);
+    g.strokeStyle = "#fff"; g.lineCap = g.lineJoin = "round"; g.lineWidth = size / 110;
+    g.save(); g.translate(h, h);
+    for (let k = 0; k < n; k++) { g.rotate((Math.PI * 2) / n); hornMotif(g, 0, -h * 0.62, h * 0.3, 1); }
+    g.rotate(Math.PI / n); for (let k = 0; k < n; k++) { g.rotate((Math.PI * 2) / n); hornMotif(g, 0, -h * 0.36, h * 0.13, 1); }
+    rhomb(g, 0, 0, h * 0.12); rhomb(g, 0, 0, h * 0.05);
+    if (ring) { g.beginPath(); g.arc(0, 0, h * 0.93, 0, Math.PI * 2); g.stroke(); g.lineWidth /= 2; g.beginPath(); g.arc(0, 0, h * 0.97, 0, Math.PI * 2); g.stroke(); }
+    g.restore();
+    return c;
+  }
   const tex = (c, rx, ry) => { const tx = new THREE.CanvasTexture(c); tx.wrapS = tx.wrapT = THREE.RepeatWrapping; tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = maxAniso; tx.repeat.set(rx, ry); return tx; };
   function floorCanvas() {
     const c = document.createElement("canvas"); c.width = c.height = 512; const g = c.getContext("2d");
     g.fillStyle = "#0b0e1c"; g.fillRect(0, 0, 512, 512);
     g.strokeStyle = "rgba(95,212,230,0.10)"; g.lineWidth = 1; for (let k = 32; k < 512; k += 32) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k, 512); g.moveTo(0, k); g.lineTo(512, k); g.stroke(); }
     g.strokeStyle = "rgba(95,212,230,0.35)"; g.lineWidth = 2; g.strokeRect(1, 1, 510, 510);
-    // central ornament medallion: four ram horns around a rhombus
-    g.save(); g.translate(256, 256); g.strokeStyle = "rgba(224,178,90,0.55)"; g.lineWidth = 4; g.lineCap = "round";
-    for (let k = 0; k < 4; k++) { g.rotate(Math.PI / 2); g.beginPath(); g.moveTo(0, -30); g.bezierCurveTo(0, -90, 70, -90, 70, -50); g.bezierCurveTo(70, -24, 40, -24, 42, -46); g.stroke(); }
-    g.beginPath(); g.moveTo(0, -26); g.lineTo(26, 0); g.lineTo(0, 26); g.lineTo(-26, 0); g.closePath(); g.stroke(); g.restore();
+    // central medallion: four ram-horn motifs growing out of a double rhombus, small curls in the corners
+    g.save(); g.translate(256, 256); g.strokeStyle = "rgba(224,178,90,0.55)"; g.lineWidth = 3.5; g.lineCap = g.lineJoin = "round";
+    for (let k = 0; k < 4; k++) { g.rotate(Math.PI / 2); hornMotif(g, 0, -92, 62, 1); }
+    rhomb(g, 0, 0, 30); rhomb(g, 0, 0, 14); g.restore();
+    g.strokeStyle = "rgba(224,178,90,0.35)"; g.lineWidth = 2.5;
+    for (const [x, y, r] of [[34, 34, 0.75], [478, 34, 1.25], [478, 478, 1.75], [34, 478, 0.25]]) { g.save(); g.translate(x, y); g.rotate(Math.PI * r); hornMotif(g, 0, -4, 24, 1); g.restore(); }
     return c;
   }
+  // frieze: motifs growing up from the bottom line alternate with motifs hanging from the top line
   function ornamentCanvas() {
     const c = document.createElement("canvas"); c.width = 1024; c.height = 128; const g = c.getContext("2d");
     g.fillStyle = "#000"; g.fillRect(0, 0, 1024, 128);
-    g.strokeStyle = "#ffffff"; g.lineWidth = 7; g.lineCap = "round";
-    for (let x = 0; x < 1024; x += 128) {
-      g.beginPath(); g.moveTo(x, 64); g.lineTo(x + 28, 64);
-      g.bezierCurveTo(x + 28, 14, x + 74, 14, x + 74, 54); g.bezierCurveTo(x + 74, 78, x + 50, 78, x + 52, 58);
-      g.moveTo(x + 128, 64); g.lineTo(x + 100, 64);
-      g.bezierCurveTo(x + 100, 114, x + 54, 114, x + 54, 74); g.bezierCurveTo(x + 54, 50, x + 78, 50, x + 76, 70);
-      g.stroke();
+    g.strokeStyle = "#ffffff"; g.lineWidth = 5; g.lineCap = g.lineJoin = "round";
+    for (let x = 0; x < 1024; x += 256) {
+      hornMotif(g, x + 64, 56, 40, 1); g.beginPath(); g.moveTo(x + 64, 94); g.lineTo(x + 64, 118); g.stroke();
+      hornMotif(g, x + 192, 76, 40, -1); g.beginPath(); g.moveTo(x + 192, 38); g.lineTo(x + 192, 10); g.stroke();
+      rhomb(g, x + 128, 64, 9); rhomb(g, x, 64, 9);
     }
-    g.fillRect(0, 4, 1024, 4); g.fillRect(0, 120, 1024, 4);
+    g.fillStyle = "#fff"; g.fillRect(0, 4, 1024, 5); g.fillRect(0, 119, 1024, 5);
     return c;
   }
   const span = HALL_START + 30 - (RZ - RR - 24);
@@ -833,7 +863,15 @@ async function startMuseum() {
     neon: new THREE.MeshBasicMaterial({ color: CYAN }),
     neonGold: new THREE.MeshBasicMaterial({ color: GOLD }),
     band: new THREE.MeshBasicMaterial({ map: tex(orn, 6, 1), color: GOLD, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+    rosette: new THREE.MeshBasicMaterial({ map: tex(rosetteCanvas(512, 6, true), 1, 1), color: GOLD, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
   };
+  // an ornament strip of the given length on a plane; vertical strips are the frieze turned on its side
+  function strip(w, h, vertical) {
+    const m = M.band.clone(); m.map = M.band.map.clone(); m.map.repeat.set(Math.max(1, Math.round((vertical ? h : w) / (vertical ? w : h) / 8)), 1);
+    if (vertical) { m.map.center.set(0.5, 0.5); m.map.rotation = Math.PI / 2; }
+    m.map.needsUpdate = true;
+    const o = new THREE.Mesh(new THREE.PlaneGeometry(w, h), m); o.castShadow = false; return o;
+  }
   function mesh(geo, mat, x = 0, y = 0, z = 0, parent = scene) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; }
   const add = (parent, m, x = 0, y = 0, z = 0) => { m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; parent.add(m); return m; };
 
@@ -852,7 +890,7 @@ async function startMuseum() {
     mesh(new THREE.BoxGeometry(0.6, 11.5, len), M.wall, s * (OUTER + 0.3), 5.75, mid);
     // glowing ornament band along each wall, above the pictures
     const band = mesh(new THREE.PlaneGeometry(len, 0.9), M.band.clone(), s * (OUTER - 0.01), 5.4, mid); band.rotation.y = -s * Math.PI / 2; band.castShadow = false;
-    band.material.map = M.band.map.clone(); band.material.map.repeat.set(len / 2.2, 1); band.material.map.needsUpdate = true;
+    band.material.map = M.band.map.clone(); band.material.map.repeat.set(Math.round(len / 7.2), 1); // keep the 8:1 tile proportions so spirals stay round band.material.map.needsUpdate = true;
     const line = mesh(new THREE.BoxGeometry(0.04, 0.04, len), M.neon, s * (OUTER - 0.02), 0.6, mid); line.castShadow = false;
     mesh(new THREE.BoxGeometry(OUTER - NAVE, 0.4, len), M.stone, s * (NAVE + (OUTER - NAVE) / 2 + 0.3), 6.4, mid);
     mesh(new THREE.BoxGeometry(1.2, 0.7, HALL_START - PORTALS.at(-1) + 0.8), M.stone, s * NAVE, 5.85, (HALL_START + PORTALS.at(-1)) / 2);
@@ -860,7 +898,12 @@ async function startMuseum() {
     mesh(new THREE.BoxGeometry(OUTER - NAVE - 0.4, 11.5, 0.8), M.wall, s * (NAVE + (OUTER - NAVE) / 2 + 0.5), 5.75, HALL_START + 0.4);
   }
   for (const z of PORTALS) {
-    for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(1.1, 5.5, 1.5), M.stone, s * NAVE, 2.75, z);
+    for (const s of [-1, 1]) {
+      mesh(new THREE.BoxGeometry(1.1, 5.5, 1.5), M.stone, s * NAVE, 2.75, z);
+      // vertical ornament strips on both faces of each pier, a rosette at the keystone
+      for (const f of [1, -1]) { const o = strip(0.62, 4.6, true); o.position.set(s * NAVE, 2.75, z + f * 0.76); if (f < 0) o.rotation.y = Math.PI; scene.add(o); }
+    }
+    for (const f of [1, -1]) { const r = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), M.rosette); r.position.set(0, 10.55, z + f * 0.74); if (f < 0) r.rotation.y = Math.PI; scene.add(r); }
     mesh(new THREE.TorusGeometry(NAVE, 0.5, 6, 48, Math.PI), M.stone, 0, 5.5, z).scale.z = 1.4;
     const glow = mesh(new THREE.TorusGeometry(NAVE - 0.52, 0.035, 6, 64, Math.PI), M.neonGold, 0, 5.5, z + 0.72); glow.castShadow = false;
     const glow2 = mesh(new THREE.TorusGeometry(NAVE - 0.52, 0.035, 6, 64, Math.PI), M.neonGold, 0, 5.5, z - 0.72); glow2.castShadow = false;
@@ -878,7 +921,12 @@ async function startMuseum() {
     const n = 14;
     for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + Math.PI / n; if (Math.abs(Math.atan2(Math.sin(a), Math.cos(a))) < open + 0.15) continue; column(Math.sin(a) * (RR - 1.6), RZ + Math.cos(a) * (RR - 1.6), 6.2, 0.38); }
     const ring = mesh(new THREE.TorusGeometry(RR - 1.6, 0.4, 8, 96), M.stone, 0, 6.5, RZ); ring.rotation.x = Math.PI / 2; ring.scale.z = 1.6;
-    for (const r of [3, 6, 8.6]) { const l = mesh(new THREE.RingGeometry(r, r + 0.05, 128), r === 6 ? M.neonGold : M.neon, 0, 0.012, RZ); l.rotation.x = -Math.PI / 2; l.castShadow = false; }
+    for (const r of [6, 8.6]) { const l = mesh(new THREE.RingGeometry(r, r + 0.05, 128), r === 6 ? M.neonGold : M.neon, 0, 0.012, RZ); l.rotation.x = -Math.PI / 2; l.castShadow = false; }
+    // a large ram-horn rosette inlaid in the rotunda floor, and a frieze running round the wall
+    const ros = new THREE.Mesh(new THREE.PlaneGeometry(11.4, 11.4), new THREE.MeshBasicMaterial({ map: tex(rosetteCanvas(1024, 8, true), 1, 1), color: GOLD, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }));
+    ros.rotation.x = -Math.PI / 2; ros.position.set(0, 0.015, RZ); scene.add(ros);
+    const fr = M.band.clone(); fr.map = M.band.map.clone(); fr.map.repeat.set(Math.round((RR * (Math.PI * 2 - open * 2)) / 7.2), 1); fr.map.needsUpdate = true; fr.side = THREE.BackSide;
+    const frieze = new THREE.Mesh(new THREE.CylinderGeometry(RR - 0.06, RR - 0.06, 0.9, 96, 1, true, open, Math.PI * 2 - open * 2), fr); frieze.position.set(0, 1.0, RZ); scene.add(frieze);
     mesh(new THREE.CylinderGeometry(1.1, 1.25, 0.9, 6), M.stone, 0, 0.45, RZ - 1);
     // tunduk: an outer ring with two sets of three crossing arches (kuldurmach), glowing gold
     const tg = new THREE.Group(); tg.position.set(0, 10.6, RZ); scene.add(tg);
@@ -898,14 +946,21 @@ async function startMuseum() {
   const fit = (ar, maxW, maxH) => (ar > maxW / maxH ? [maxW, maxW / ar] : [maxH * ar, maxH]);
   function framed(tx, w, h, x, y, z, rotY) {
     const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = rotY; scene.add(g);
+    framed.last = g;
     const b = 0.1;
     mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshStandardMaterial({ map: tx, emissive: "#ffffff", emissiveMap: tx, emissiveIntensity: 0.55, roughness: 0.8 }), 0, 0, 0.03, g);
     for (const [bw, bh, bx, by] of [[w + b * 2, b, 0, h / 2 + b / 2], [w + b * 2, b, 0, -h / 2 - b / 2], [b, h, -w / 2 - b / 2, 0], [b, h, w / 2 + b / 2, 0]]) mesh(new THREE.BoxGeometry(bw, bh, 0.1), M.gold, bx, by, 0.03, g);
     const glow = mesh(new THREE.PlaneGeometry(w + 0.9, h + 0.9), new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: 0.07, depthWrite: false }), 0, 0, 0.005, g); glow.castShadow = false;
   }
-  const backZ = RZ - RR + 0.35;
-  photo("img/news-kabar.jpg", (tx, ar) => { const [w, h] = fit(ar, 3.4, 4.2); framed(tx, w, h, 0, 3.4, backZ, 0); });
-  for (const [img, s] of [["img/games-stage.jpg", -1], ["img/moscow.jpg", 1]]) { const a = s * 0.62, r = RR - 0.35; photo(img, (tx, ar) => { const [w, h] = fit(ar, 2.4, 3.1); framed(tx, w, h, Math.sin(a) * r, 3.2, RZ - Math.cos(a) * r, -a); }); }
+  // rotunda photos stand on gold easels in front of the column ring, so no column hides them
+  const easel = (g, w, h, y) => {
+    const post = y - h / 2;
+    for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(0.06, post, 0.06), M.gold, s * w * 0.38, -h / 2 - post / 2, -0.04, g);
+    mesh(new THREE.BoxGeometry(w * 0.9, 0.06, 0.5), M.gold, 0, -y + 0.03, -0.04, g);
+  };
+  const PHOTO_R = RR - 2.7;
+  photo("img/news-kabar.jpg", (tx, ar) => { const [w, h] = fit(ar, 3.0, 3.8); framed(tx, w, h, 0, 3.1, RZ - PHOTO_R, 0); easel(framed.last, w, h, 3.1); });
+  for (const [img, s] of [["img/games-stage.jpg", -1], ["img/moscow.jpg", 1]]) { const a = s * 0.7; photo(img, (tx, ar) => { const [w, h] = fit(ar, 2.3, 3.0); framed(tx, w, h, Math.sin(a) * PHOTO_R, 2.9, RZ - Math.cos(a) * PHOTO_R, -a); easel(framed.last, w, h, 2.9); }); }
 
   function pedestal(x, z) {
     const g = new THREE.Group(); g.position.set(x, 0, z); scene.add(g);
@@ -1015,7 +1070,7 @@ async function startMuseum() {
   STOPS.length = 0;
   STOPS.push({ p: new THREE.Vector3(0, 2.5, 18), t: new THREE.Vector3(0, 3.4, -30) });
   EX_Z.forEach((z, i) => { const side = i % 2 ? 1 : -1; STOPS.push({ p: new THREE.Vector3(side * -0.9, 1.95, z + 4.4), t: new THREE.Vector3(side * 2.7, 1.85, z - 0.2) }); });
-  STOPS.push({ p: new THREE.Vector3(0, 2.1, PORTALS.at(-1) - 0.5), t: new THREE.Vector3(0, 5.6, RZ - RR) });
+  STOPS.push({ p: new THREE.Vector3(0, 2.1, PORTALS.at(-1) - 0.5), t: new THREE.Vector3(0, 4.6, RZ - RR) });
 
   /* free walk input */
   const kmap = { KeyW: "f", ArrowUp: "f", KeyS: "b", ArrowDown: "b", KeyA: "l", ArrowLeft: "l", KeyD: "r", ArrowRight: "r" };
@@ -1052,7 +1107,7 @@ function tourAt(p, outP, outT) {
 }
 function inside(x, z) {
   if (z <= HALL_START + 6 && z >= HALL_END - 0.5 && Math.abs(x) <= OUTER - 0.5) return !EX_Z.some((ez, i) => Math.abs(z - ez) < 1.0 && Math.abs(x - (i % 2 ? 2.7 : -2.7)) < 1.0);
-  const dz = z - RZ; return Math.hypot(x, dz) < RR - 2.3 && Math.hypot(x, dz + 1) > 1.8;
+  const dz = z - RZ; return Math.hypot(x, dz) < RR - 3.2 && Math.hypot(x, dz + 1) > 1.8;
 }
 // The tour camera can stand outside the walkable area (the entrance stop is behind the hall start);
 // free walk starts from the nearest point inside, otherwise every step is rejected.
