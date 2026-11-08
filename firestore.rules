@@ -1,0 +1,138 @@
+rules_version = '2';
+
+// MIR×AIR site data.
+//   profiles/{uid}   student profile; the owner edits, the group's starosta approves
+//   projects/{id}    project submitted by a student; the group's starosta approves
+//   likes/{id}       one like per device per project (id = projectId + "_" + deviceId)
+//   likeCounts/{id}  like counter per project
+//   news/{id}        news and events, written by starostas
+//
+// Moderators are listed by verified email. "all" may moderate every group.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function moderators() {
+      return {
+        'avazbek.madrakhimovw@gmail.com': 'all'
+      };
+    }
+    function signedIn() { return request.auth != null; }
+    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function modScope() {
+      return verified() && request.auth.token.email in moderators()
+        ? moderators()[request.auth.token.email] : '';
+    }
+    function isMod() { return modScope() != ''; }
+    function modOf(group) { return modScope() == 'all' || modScope() == group; }
+
+    function groupId(g) { return g in ['mir-1', 'mir-2', 'mir-3']; }
+    function str(v, max) { return v is string && v.size() <= max; }
+    function optStr(d, k, max) { return !(k in d) || str(d[k], max); }
+    function strList(v, maxItems) { return v is list && v.size() <= maxItems; }
+    // a compressed JPEG data URL; Firestore documents are capped at 1 MiB in total
+    function photo(v, max) { return v is string && v.size() <= max && (v.size() == 0 || v.matches('^data:image/(jpeg|png|webp);base64,.*')); }
+
+    // ---------- profiles ----------
+    function validProfile(d) {
+      return d.keys().hasOnly(['name', 'group', 'bio', 'skills', 'internship', 'contacts', 'photo', 'status', 'updatedAt', 'createdAt'])
+        && str(d.name, 80) && d.name.size() > 3 && groupId(d.group)
+        && optStr(d, 'bio', 600)
+        && strList(d.skills, 20)
+        && d.internship is bool
+        && d.contacts is map && d.contacts.keys().hasOnly(['telegram', 'github', 'email', 'linkedin', 'site'])
+        && photo(d.photo, 200000)
+        && d.status in ['pending', 'approved', 'rejected']
+        && d.updatedAt == request.time;
+    }
+    match /profiles/{uid} {
+      allow read: if resource.data.status == 'approved'
+        || (signedIn() && request.auth.uid == uid)
+        || modOf(resource.data.group);
+      // the owner creates and edits; every edit goes back to the review queue
+      allow create: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data) && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && request.auth.uid == uid
+        && validProfile(request.resource.data) && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == resource.data.createdAt;
+      // the starosta of the group approves or rejects without touching the content
+      allow update: if modOf(resource.data.group)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'approved', 'rejected'];
+      allow delete: if (signedIn() && request.auth.uid == uid) || modOf(resource.data.group);
+    }
+
+    // ---------- projects ----------
+    function validProject(d) {
+      return d.keys().hasOnly(['title', 'desc', 'group', 'groups', 'type', 'stage', 'tags', 'authors', 'photos', 'demo', 'repo', 'problem', 'solution', 'result', 'ownerUid', 'status', 'createdAt', 'updatedAt'])
+        && str(d.title, 120) && d.title.size() > 2
+        && str(d.desc, 600)
+        && groupId(d.group) && d.groups is list && d.groups.size() >= 1 && d.groups.size() <= 3 && d.groups[0] == d.group
+        && d.type in ['project', 'demo', 'site', 'idea']
+        && d.stage in ['idea', 'work', 'demo']
+        && strList(d.tags, 12)
+        && str(d.authors, 300)
+        && d.photos is list && d.photos.size() <= 4
+        && optStr(d, 'demo', 300) && optStr(d, 'repo', 300)
+        && optStr(d, 'problem', 800) && optStr(d, 'solution', 1200) && optStr(d, 'result', 800)
+        && d.status in ['pending', 'approved', 'rejected']
+        && d.updatedAt == request.time;
+    }
+    match /projects/{id} {
+      allow read: if resource.data.status == 'approved'
+        || (signedIn() && request.auth.uid == resource.data.ownerUid)
+        || modOf(resource.data.group);
+      allow create: if signedIn() && validProject(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && request.auth.uid == resource.data.ownerUid
+        && validProject(request.resource.data)
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow update: if modOf(resource.data.group)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'approved', 'rejected'];
+      allow delete: if (signedIn() && request.auth.uid == resource.data.ownerUid) || modOf(resource.data.group);
+    }
+
+    // ---------- likes ----------
+    // Static projects from data.js are liked too, so a like only names a project id.
+    // The document id fixes one like per device per project; likes are never changed or removed.
+    match /likes/{likeId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['project', 'device', 'at'])
+        && str(request.resource.data.project, 80) && str(request.resource.data.device, 40)
+        && likeId == request.resource.data.project + '_' + request.resource.data.device
+        && request.resource.data.at == request.time;
+    }
+    // Per-project counters. Each +1 must arrive in the same batch as a brand-new like
+    // document from the device named in `last`, so a counter can't be raised without a like.
+    function newLike(project, device) {
+      return device is string
+        && existsAfter(/databases/$(database)/documents/likes/$(project + '_' + device))
+        && !exists(/databases/$(database)/documents/likes/$(project + '_' + device));
+    }
+    match /likeCounts/{project} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == 1 && newLike(project, request.resource.data.last);
+      allow update: if request.resource.data.keys().hasOnly(['n', 'last'])
+        && request.resource.data.n == resource.data.n + 1 && newLike(project, request.resource.data.last);
+    }
+
+    // ---------- news and events ----------
+    match /news/{id} {
+      allow read: if true;
+      allow create, update: if isMod()
+        && request.resource.data.keys().hasOnly(['kind', 'title', 'text', 'date', 'place', 'link', 'photo', 'groups', 'author', 'createdAt', 'updatedAt'])
+        && request.resource.data.kind in ['news', 'event']
+        && str(request.resource.data.title, 140) && str(request.resource.data.text, 2000)
+        && request.resource.data.date is timestamp
+        && optStr(request.resource.data, 'place', 140) && optStr(request.resource.data, 'link', 300)
+        && (!('photo' in request.resource.data) || photo(request.resource.data.photo, 400000));
+      allow delete: if isMod();
+    }
+  }
+}
