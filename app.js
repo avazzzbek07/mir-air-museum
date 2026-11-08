@@ -279,6 +279,44 @@ const PAGES = {
   },
 };
 
+/* ---------- email links from Firebase: ?mode=verifyEmail|resetPassword|recoverEmail&oobCode=… ---------- */
+const AT = {
+  ru: { title: "Ссылка из письма", busy: "Проверяем ссылку…", ok: "Email подтверждён. Теперь можно пользоваться всеми возможностями сайта.", bad: "Ссылка устарела или уже использована. Запросите новое письмо на странице входа.",
+    reset: "Новый пароль", for: "Для аккаунта", setpass: "Сохранить пароль", done: "Пароль изменён. Войдите с новым паролем.", go: "Перейти в профиль", login: "Войти" },
+  ky: { title: "Каттагы шилтеме", busy: "Шилтеме текшерилүүдө…", ok: "Email ырасталды. Эми сайттын бардык мүмкүнчүлүктөрүн колдоно аласыз.", bad: "Шилтеменин мөөнөтү бүткөн же колдонулган. Кирүү барагынан жаңы кат сураңыз.",
+    reset: "Жаңы сырсөз", for: "Аккаунт үчүн", setpass: "Сырсөздү сактоо", done: "Сырсөз өзгөртүлдү. Жаңы сырсөз менен кириңиз.", go: "Профилге өтүү", login: "Кирүү" },
+  en: { title: "Email link", busy: "Checking the link…", ok: "Your email is confirmed. You can now use everything on the site.", bad: "This link has expired or was already used. Request a new email from the sign-in page.",
+    reset: "New password", for: "For account", setpass: "Save password", done: "Password changed. Sign in with your new password.", go: "Go to profile", login: "Sign in" },
+};
+const at = (k) => (AT[getLang()] || AT.ru)[k];
+const ACT = (() => {
+  const q = new URLSearchParams(location.search), mode = q.get("mode"), code = q.get("oobCode");
+  if (!mode || !code) return null;
+  history.replaceState(null, "", location.pathname + "#action");
+  return { mode, code, state: "busy", started: false, email: "" };
+})();
+PAGES.action = () => {
+  if (!ACT) return `${head("", at("title"), at("bad"))}`;
+  const s = ACT.state;
+  return `${head(esc(at("title")), ACT.mode === "resetPassword" ? at("reset") : at("title"))}
+    ${s === "busy" ? `<div class="banner info"><span>${esc(at("busy"))}</span></div>` : ""}
+    ${s === "ok" ? `<div class="banner ok"><span>${esc(at("ok"))}</span><a class="btn solid" href="#me">${esc(at("go"))}</a></div>` : ""}
+    ${s === "bad" ? `<div class="banner bad"><span>${esc(at("bad"))}</span><a class="btn" href="#me">${esc(at("login"))}</a></div>` : ""}
+    ${s === "done" ? `<div class="banner ok"><span>${esc(at("done"))}</span><a class="btn solid" href="#me">${esc(at("login"))}</a></div>` : ""}
+    ${s === "form" ? `<form class="form authbox" id="resetForm"><p class="note full">${esc(at("for"))}: ${esc(ACT.email)}</p>
+      <div class="field full"><label for="rs-pass">${esc(t("password.new"))}</label><input id="rs-pass" type="password" required minlength="6" autocomplete="new-password"></div>
+      <div class="full"><button class="btn solid" type="submit">${esc(at("setpass"))}</button></div></form>` : ""}`;
+};
+async function runAction() {
+  if (!ACT || ACT.started || !FB) return;
+  ACT.started = true;
+  try {
+    if (ACT.mode === "resetPassword") { ACT.email = await FB.emailForReset(ACT.code); ACT.state = "form"; }
+    else { await FB.applyCode(ACT.code); ACT.state = "ok"; const u = await FB.refreshUser(); if (u) { S.user = u; S.scope = FB.modScope(u); renderNav(); } }
+  } catch (e) { console.warn(e); ACT.state = "bad"; }
+  if (location.hash === "#action") route(true);
+}
+
 function groupCards() {
   return `<div class="grid">${GROUPS.map((g) => {
     const n = ALL().filter((p) => groupsOf(p).includes(g.id)).length;
@@ -441,6 +479,7 @@ async function route(soft) {
   if (r === "me" && S.user) { fillNames($("pf-name"), $("pf-group").value, S.me?.name); renderMyProjects(); }
   if (r === "me" && !S.user && $("rg-name")) fillNames($("rg-name"), $("rg-group").value, "");
   if (r === "mod" && S.scope) renderQueue();
+  if (r === "action") runAction();
 }
 function showMuseum(r) {
   const wasPage = !museumOn;
@@ -532,6 +571,7 @@ page.addEventListener("submit", async (e) => {
   }
   busy(true);
   try {
+    if (f.id === "resetForm") { await FB.confirmReset(ACT.code, $("rs-pass").value); ACT.state = "done"; route(true); }
     if (f.id === "loginForm") { await FB.signIn(v("li-email"), $("li-pass").value); }
     if (f.id === "regForm") {
       const name = v("rg-name"), group = v("rg-group");

@@ -3,6 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebas
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendEmailVerification, sendPasswordResetEmail, signOut, reload,
+  applyActionCode, verifyPasswordResetCode, confirmPasswordReset,
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
@@ -18,6 +19,8 @@ export { Timestamp };
 /* ---------- auth ---------- */
 export const onUser = (cb) => onAuthStateChanged(auth, cb);
 export const signIn = (email, pass) => signInWithEmailAndPassword(auth, email, pass);
+// Email links (verify, reset) land on the site itself once the Firebase console's custom action URL
+// points at https://avazzzbek07.github.io/mir-air-museum/ — app.js handles ?mode=…&oobCode=… there.
 export async function signUp(email, pass) {
   const cred = await createUserWithEmailAndPassword(auth, email, pass);
   try { await sendEmailVerification(cred.user); } catch (e) {}
@@ -25,6 +28,9 @@ export async function signUp(email, pass) {
 }
 export const resendVerification = () => sendEmailVerification(auth.currentUser);
 export const resetPassword = (email) => sendPasswordResetEmail(auth, email);
+export const applyCode = (code) => applyActionCode(auth, code);
+export const emailForReset = (code) => verifyPasswordResetCode(auth, code);
+export const confirmReset = (code, pass) => confirmPasswordReset(auth, code, pass);
 export const logout = () => signOut(auth);
 export async function refreshUser() { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } return auth.currentUser; }
 export function modScope(user) {
