@@ -10,6 +10,28 @@ try { FB = await import("./fb.js"); } catch (e) { console.warn("Firebase unavail
    ============================================================ */
 const STATIC = ITEMS.filter((p) => SITE.showExamples || !p.example).map((p, i) => ({ ...p, created: -i }));
 const ACH = ACHIEVEMENTS.filter((a) => SITE.showExamples || !a.example);
+
+/* Content translations (data-tr.js) are applied to the same objects in place,
+   so museum halls, links and filters keep working after a language switch. */
+const TRC = () => (typeof DATA_TR !== "undefined" && DATA_TR[getLang()]) || null;
+const ROLE_BASE = { ...ROLE_RU };
+function localizeContent() {
+  const tr = TRC();
+  STATIC.forEach((p) => {
+    p._ru ??= { title: p.title, desc: p.desc, author: p.author, tags: p.tags, story: p.story };
+    const r = p._ru, x = tr?.items?.[p.id] || {};
+    p.title = x.title || r.title; p.desc = x.desc || r.desc; p.author = x.author || r.author;
+    p.tags = (r.tags || []).map((tg) => tr?.tags?.[tg] || tg);
+    p.story = x.story ? { ...r.story, ...x.story } : r.story;
+  });
+  GROUPS.forEach((g) => {
+    g._about ??= g.about; g.about = tr?.groups?.[g.id] || g._about;
+    g.squads.forEach((sq) => { sq._name ??= sq.name; sq.name = tr?.squads?.[sq._name] || sq._name; });
+  });
+  Object.assign(ROLE_RU, ROLE_BASE, tr?.roles || {});
+  ACH.forEach((a, i) => { a._ru ??= { date: a.date, title: a.title, text: a.text }; Object.assign(a, a._ru, tr?.ach?.[i] || {}); });
+}
+localizeContent();
 const GROUP = Object.fromEntries(GROUPS.map((g) => [g.id, g]));
 const BOT_URL = SITE.bot ? `https://t.me/${SITE.bot}` : "";
 const FEATURED = ["starys", "cyberbuddy", "esp32-mini-radar", "glove-mouse", "smartsprout", "pixie", "esp32-rc-car", "kamkor", "sunflower"];
@@ -166,9 +188,9 @@ const PAGES = {
         ${n.photo ? `<img src="${esc(n.photo)}" alt="" loading="lazy">` : ""}${safeUrl(n.link) ? `<p><a href="${esc(safeUrl(n.link))}" target="_blank" rel="noopener">${esc(t("n.link"))} →</a></p>` : ""}</div>
         ${S.scope ? `<button type="button" class="btn danger" data-delnews="${esc(n._id)}">${esc(t("delete"))}</button>` : "<span></span>"}</div>`).join("")}
       <div class="item"><div class="when">${esc(t("final.eyebrow").split("·")[1] || "")}</div><div class="news">
-        <img src="img/news-kabar.jpg" alt="Кыргызские студенты стали лучшими медиаспециалистами на Космических играх" loading="lazy">
-        <div class="facts"><h3>Кыргызские студенты стали лучшими медиаспециалистами на Космических играх</h3>
-          <p>Международные космические игры прошли в Москве на площадке МГТУ им. Н. Э. Баумана. О нашем успехе написало Кыргызское национальное информационное агентство «Кабар».</p>
+        <img src="img/news-kabar.jpg" alt="${esc(kabar().title)}" loading="lazy">
+        <div class="facts"><h3>${esc(kabar().title)}</h3>
+          <p>${esc(kabar().text)}</p>
           <div class="row"><a class="btn" href="https://kabar.kg" target="_blank" rel="noopener">${esc(t("news.source"))}: kabar.kg</a></div></div></div><span></span></div>
     </div></section>
     <section class="block"><h2 class="sec">${esc(t("gallery"))}</h2>${gallery()}</section>
@@ -326,10 +348,15 @@ function groupCards() {
     return `<a class="tile gcard" href="#g-${esc(g.id)}"><div class="eyebrow">${esc(g.full)}</div><div class="big">${esc(g.name)}</div><p>${esc(g.about)}</p><p class="note">${g.size} ${esc(t("students.n"))} · ${n} ${esc(t("projects.n"))}</p></a>`;
   }).join("")}</div>`;
 }
-const gallery = () => `<div class="photos">
-  <figure><img src="img/games-stage.jpg" alt="Команда МИР×АИР на сцене Международных космических игр" loading="lazy"><figcaption>Международные космические игры</figcaption></figure>
-  <figure><img src="img/games-field.jpg" alt="Студенты на площадке Международных космических игр" loading="lazy"><figcaption>На площадке игр</figcaption></figure>
-  <figure><img src="img/moscow.jpg" alt="Команда на Красной площади в Москве" loading="lazy"><figcaption>Красная площадь, Москва</figcaption></figure></div>`;
+const kabar = () => TRC()?.kabar || {
+  title: "Кыргызские студенты стали лучшими медиаспециалистами на Космических играх",
+  text: "Международные космические игры прошли в Москве на площадке МГТУ им. Н. Э. Баумана. О нашем успехе написало Кыргызское национальное информационное агентство «Кабар».",
+};
+const gallery = () => {
+  const cap = TRC()?.gallery || ["Международные космические игры", "На площадке игр", "Красная площадь, Москва"];
+  return `<div class="photos">${["games-stage", "games-field", "moscow"].map((f, i) =>
+    `<figure><img src="img/${f}.jpg" alt="${esc(cap[i])}" loading="lazy"><figcaption>${esc(cap[i])}</figcaption></figure>`).join("")}</div>`;
+};
 const nameLink = (name) => { const pr = profileByName(name); return pr ? `<a href="#s-${esc(pr._id)}">${esc(name)}</a>` : esc(name); };
 
 function projectPage(p) {
@@ -654,7 +681,7 @@ function applyI18n() {
   applyPanel(); renderNav(); renderRail();
   if (currentStop >= 1 && currentStop <= H) fillPanel(currentStop - 1);
 }
-document.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("click", () => { setLang(b.dataset.lang); applyI18n(); if (!museumOn) route(true); }));
+document.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("click", () => { setLang(b.dataset.lang); localizeContent(); applyI18n(); if (!museumOn) route(true); }));
 $("menuBtn").addEventListener("click", () => { const o = $("nav").classList.toggle("open"); $("menuBtn").setAttribute("aria-expanded", String(o)); });
 
 /* ============================================================

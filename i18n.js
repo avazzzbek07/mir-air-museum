@@ -242,6 +242,8 @@ const D = {
 export const LANGS = ["ru", "ky", "en"];
 let lang = "ru";
 try { const v = localStorage.getItem("mirair-lang"); if (LANGS.includes(v)) lang = v; } catch (e) {}
+// a link with ?lang=ky or ?lang=en opens the site in that language and remembers it
+{ const q = new URLSearchParams(location.search).get("lang"); if (LANGS.includes(q)) { lang = q; try { localStorage.setItem("mirair-lang", q); } catch (e) {} } }
 export const getLang = () => lang;
 export function setLang(v) { lang = LANGS.includes(v) ? v : "ru"; try { localStorage.setItem("mirair-lang", lang); } catch (e) {} document.documentElement.lang = lang; }
 export const t = (k) => D[lang][k] ?? D.ru[k] ?? k;
