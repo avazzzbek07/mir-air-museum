@@ -2,12 +2,12 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, signOut, reload,
+  sendEmailVerification, sendPasswordResetEmail, signOut, reload, signInAnonymously,
   applyActionCode, verifyPasswordResetCode, confirmPasswordReset,
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, serverTimestamp, runTransaction, Timestamp,
+  query, where, serverTimestamp, runTransaction, Timestamp, writeBatch, deleteField,
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 import { firebaseConfig, MODERATORS } from "./config.js";
 
@@ -34,7 +34,7 @@ export const confirmReset = (code, pass) => confirmPasswordReset(auth, code, pas
 export const logout = () => signOut(auth);
 export async function refreshUser() { if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); } return auth.currentUser; }
 export function modScope(user) {
-  if (!user || !user.emailVerified) return "";
+  if (!user || user.isAnonymous || !user.emailVerified) return "";
   return MODERATORS[(user.email || "").toLowerCase()] || "";
 }
 
@@ -53,23 +53,46 @@ export async function loadPublic() {
 
 /* ---------- profiles ---------- */
 export async function getProfile(uid) { const s = await getDoc(doc(db, "profiles", uid)); return s.exists() ? { _id: s.id, ...s.data() } : null; }
+// A new profile is created at sign-up, before the email is confirmed; later edits need a confirmed email.
 export async function saveProfile(uid, data, isNew) {
   const body = { ...data, status: "pending", updatedAt: serverTimestamp() };
   if (isNew) body.createdAt = serverTimestamp();
   if (isNew) await setDoc(doc(db, "profiles", uid), body);
-  else await updateDoc(doc(db, "profiles", uid), body);
+  else { await needVerified(); await updateDoc(doc(db, "profiles", uid), body); }
 }
 
-/* ---------- projects ---------- */
+/* ---------- projects ----------
+   projects/{id} holds the text and a small cover; full-size photos live in projectPhotos/{id}
+   and load only when the project page opens, so the project list stays light.
+   Older projects kept full photos in projects/{id}.photos; saving one moves them out. */
 export async function myProjects(uid) { return rows(await getDocs(query(collection(db, "projects"), where("ownerUid", "==", uid)))); }
-export async function getProject(id) { const s = await getDoc(doc(db, "projects", id)); return s.exists() ? { _id: s.id, ...s.data() } : null; }
-export async function saveProject(id, data, uid) {
-  const body = { ...data, ownerUid: uid, status: "pending", updatedAt: serverTimestamp() };
-  if (id) { await updateDoc(doc(db, "projects", id), body); return id; }
-  body.createdAt = serverTimestamp();
-  return (await addDoc(collection(db, "projects"), body)).id;
+export async function getProject(id) {
+  const s = await getDoc(doc(db, "projects", id)); if (!s.exists()) return null;
+  const p = { _id: s.id, ...s.data() };
+  p.legacyPhotos = !!p.photos?.length;
+  if (!p.legacyPhotos) p.photos = await getPhotos(id);
+  return p;
 }
-export const deleteProject = (id) => deleteDoc(doc(db, "projects", id));
+export async function getPhotos(id) {
+  try { const s = await getDoc(doc(db, "projectPhotos", id)); return s.exists() ? s.data().photos || [] : []; } catch (e) { return []; }
+}
+// photos === null keeps the stored photos; an array replaces them and `cover` must match photos[0].
+export async function saveProject(id, data, uid, photos) {
+  await needVerified();
+  const ref = id ? doc(db, "projects", id) : doc(collection(db, "projects"));
+  const body = { ...data, ownerUid: uid, status: "pending", updatedAt: serverTimestamp() };
+  const b = writeBatch(db);
+  if (id) b.update(ref, { ...body, photos: deleteField() });
+  else b.set(ref, { ...body, createdAt: serverTimestamp() });
+  if (photos) b.set(doc(db, "projectPhotos", ref.id), { photos });
+  await b.commit();
+  return ref.id;
+}
+export async function deleteProject(id) {
+  const b = writeBatch(db);
+  b.delete(doc(db, "projectPhotos", id)); b.delete(doc(db, "projects", id));
+  await b.commit();
+}
 
 /* ---------- moderation ---------- */
 // Rules read email_verified from the ID token, which can predate the verification; refresh it first.
@@ -77,6 +100,10 @@ async function freshToken() {
   const u = auth.currentUser; if (!u) return;
   const r = await u.getIdTokenResult();
   if (!r.claims.email_verified) { await reload(u); await u.getIdToken(true); }
+}
+async function needVerified() {
+  await freshToken();
+  if (!auth.currentUser?.emailVerified) { const e = new Error("need-verify"); e.code = "need-verify"; throw e; }
 }
 export async function modQueue(scope) {
   await freshToken();
@@ -90,16 +117,12 @@ export async function modQueue(scope) {
 }
 export async function setStatus(coll, id, status) { await freshToken(); return updateDoc(doc(db, coll, id), { status, updatedAt: serverTimestamp() }); }
 
-/* ---------- likes: one per device per project, counter raised in the same transaction ---------- */
-export function deviceId() {
-  try {
-    let d = localStorage.getItem("mirair-device");
-    if (!d) { d = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, "").slice(0, 24); localStorage.setItem("mirair-device", d); }
-    return d;
-  } catch (e) { return "anon" + Math.floor(Math.random() * 1e9); }
-}
+/* ---------- likes: one per account per project, counter raised in the same transaction ----------
+   Visitors without an account get an anonymous Firebase account on their first like, so every like
+   is tied to a uid the rules can check instead of a code the browser makes up. */
 export async function like(project) {
-  const device = deviceId();
+  if (!auth.currentUser) await signInAnonymously(auth);
+  const device = auth.currentUser.uid;
   const likeRef = doc(db, "likes", `${project}_${device}`), cRef = doc(db, "likeCounts", project);
   return runTransaction(db, async (tx) => {
     const [l, c] = await Promise.all([tx.get(likeRef), tx.get(cRef)]);

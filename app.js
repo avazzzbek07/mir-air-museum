@@ -23,7 +23,8 @@ const ms = (ts) => (ts && ts.toMillis ? ts.toMillis() : 0);
 function normalize(d) {
   return {
     id: "u-" + d._id, _id: d._id, dyn: true, title: d.title, desc: d.desc, group: d.group, groups: d.groups,
-    type: d.type, status: d.stage, author: d.authors, tags: d.tags || [], photos: d.photos || [],
+    type: d.type, status: d.stage, author: d.authors, tags: d.tags || [],
+    photos: d.photos?.length ? d.photos : d.cover ? [d.cover] : [], full: !!d.photos?.length,
     demo: d.demo || "", repo: d.repo || "", ownerUid: d.ownerUid, created: ms(d.createdAt),
     story: { problem: d.problem, solution: d.solution, result: d.result },
   };
@@ -63,6 +64,7 @@ function errText(e) {
   if (/email-already-in-use/.test(c)) return t("err.exists");
   if (/weak-password/.test(c)) return t("err.weak");
   if (/photo-too-large/.test(c)) return t("err.photo");
+  if (/need-verify/.test(c)) return t("verify.need");
   return t("err.generic") + (e?.code ? ` (${e.code})` : "");
 }
 const heart = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.7 4.5c2.1 0 3.6 1.2 4.3 2.4.7-1.2 2.2-2.4 4.3-2.4 3.7 0 5.8 3.9 4.3 7.3C19.5 16.4 12 21 12 21z"/></svg>`;
@@ -239,6 +241,7 @@ const PAGES = {
     if (!FB) return `<div class="banner info">${esc(t("err.offline"))}</div>`;
     if (!S.user) return `${head(esc(t("nav.projects")), t("submit.title"))}<div class="banner"><span>${esc(t("need.login"))}</span><a class="btn solid" href="#me">${esc(t("login"))}</a></div>`;
     const p = editing || {};
+    if (!S.user.emailVerified) return `${head(esc(t("nav.projects")), t("submit.title"))}<div class="banner"><span>${esc(t("verify.need"))}</span><a class="btn solid" href="#me">${esc(t("nav.profile"))}</a></div>`;
     const gs = p.groups || [S.me?.group || "mir-1"];
     const opt = (v, cur, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
     return `${head(esc(t("nav.projects")), id ? t("submit.edit") : t("submit.title"), t("submit.lead"))}
@@ -312,7 +315,7 @@ async function runAction() {
   ACT.started = true;
   try {
     if (ACT.mode === "resetPassword") { ACT.email = await FB.emailForReset(ACT.code); ACT.state = "form"; }
-    else { await FB.applyCode(ACT.code); ACT.state = "ok"; const u = await FB.refreshUser(); if (u) { S.user = u; S.scope = FB.modScope(u); renderNav(); } }
+    else { await FB.applyCode(ACT.code); ACT.state = "ok"; const u = await FB.refreshUser(); if (u && !u.isAnonymous) { S.user = u; S.scope = FB.modScope(u); renderNav(); } }
   } catch (e) { console.warn(e); ACT.state = "bad"; }
   if (location.hash === "#action") route(true);
 }
@@ -324,9 +327,9 @@ function groupCards() {
   }).join("")}</div>`;
 }
 const gallery = () => `<div class="photos">
-  <figure><img src="img/games-stage.jpg" alt="" loading="lazy"><figcaption>Международные космические игры</figcaption></figure>
-  <figure><img src="img/games-field.jpg" alt="" loading="lazy"><figcaption>На площадке игр</figcaption></figure>
-  <figure><img src="img/moscow.jpg" alt="" loading="lazy"><figcaption>Красная площадь, Москва</figcaption></figure></div>`;
+  <figure><img src="img/games-stage.jpg" alt="Команда МИР×АИР на сцене Международных космических игр" loading="lazy"><figcaption>Международные космические игры</figcaption></figure>
+  <figure><img src="img/games-field.jpg" alt="Студенты на площадке Международных космических игр" loading="lazy"><figcaption>На площадке игр</figcaption></figure>
+  <figure><img src="img/moscow.jpg" alt="Команда на Красной площади в Москве" loading="lazy"><figcaption>Красная площадь, Москва</figcaption></figure></div>`;
 const nameLink = (name) => { const pr = profileByName(name); return pr ? `<a href="#s-${esc(pr._id)}">${esc(name)}</a>` : esc(name); };
 
 function projectPage(p) {
@@ -337,7 +340,7 @@ function projectPage(p) {
   const own = p.dyn && S.user && p.ownerUid === S.user.uid;
   return `<a class="back" href="#projects">${esc(t("back.projects"))}</a>
   <div class="proj"><div class="gallery">${photos.length ? `<img class="main" id="gMain" src="${esc(photos[0])}" alt="${esc(p.title)}">${photos.length > 1 ? `<div class="thumbs">${photos.map((ph, i) => `<button type="button" data-ph="${esc(ph)}" aria-pressed="${i === 0}" aria-label="${i + 1}"><img src="${esc(ph)}" alt=""></button>`).join("")}</div>` : ""}` : `<div class="pimg">${cover(p)}</div>`}</div>
-    <div class="facts"><div class="pmeta">${statusChip(p.status)}<span class="gchip">${esc(t("ty." + p.type))}</span>${groupChips(p)}</div>
+    <div class="facts"><div class="pmeta">${statusChip(p.status)}${p.type === p.status ? "" : `<span class="gchip">${esc(t("ty." + p.type))}</span>`}${groupChips(p)}</div>
       <h1 class="ptitle">${esc(p.title)}</h1><p class="lede">${esc(p.desc)}</p>
       <div class="tags">${(p.tags || []).map((x) => `<span>${esc(x)}</span>`).join("")}</div>
       <p class="note">${esc(t("by"))}: ${esc(p.author)}</p>
@@ -425,7 +428,7 @@ async function renderQueue() {
     const act = (coll, id) => `<div class="row"><button class="btn solid" type="button" data-mod="${coll}" data-id="${esc(id)}" data-st="approved">${esc(t("approve"))}</button><button class="btn danger" type="button" data-mod="${coll}" data-id="${esc(id)}" data-st="rejected">${esc(t("reject"))}</button></div>`;
     $("qProfiles").innerHTML = q.profiles.map((p) => `<div class="qitem">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<div class="ph"></div>`}<div><h3>${esc(p.name)} · ${esc(gname(p.group))}</h3>
       <p>${esc(p.bio || "")}</p><div class="tags" style="margin-top:6px">${(p.skills || []).map((x) => `<span>${esc(x)}</span>`).join("")}</div></div>${act("profiles", p._id)}</div>`).join("") || `<div class="empty">${esc(t("mod.empty"))}</div>`;
-    $("qProjects").innerHTML = q.projects.map((d) => `<div class="qitem">${d.photos?.[0] ? `<img src="${esc(d.photos[0])}" alt="">` : `<div class="ph"></div>`}<div><h3>${esc(d.title)} · ${esc((d.groups || []).map(gname).join(" + "))}</h3>
+    $("qProjects").innerHTML = q.projects.map((d) => `<div class="qitem">${d.cover || d.photos?.[0] ? `<img src="${esc(d.cover || d.photos[0])}" alt="">` : `<div class="ph"></div>`}<div><h3>${esc(d.title)} · ${esc((d.groups || []).map(gname).join(" + "))}</h3>
       <p>${esc(d.desc)}</p><p>${esc(t("by"))}: ${esc(d.authors)}</p>${[d.problem, d.solution, d.result].filter(Boolean).map((x) => `<p>${esc(x)}</p>`).join("")}</div>${act("projects", d._id)}</div>`).join("") || `<div class="empty">${esc(t("mod.empty"))}</div>`;
   } catch (e) { $("qProfiles").innerHTML = $("qProjects").innerHTML = `<div class="empty">${esc(errText(e))}</div>`; }
 }
@@ -450,7 +453,11 @@ async function route(soft) {
   if (!r || /^hall-\d+$/.test(r)) { navKey = "museum"; renderNav(); return showMuseum(r); }
   let html, key = r, after = null;
   if (PAGES[r]) html = PAGES[r]();
-  else if (r.startsWith("p-") && byId(r.slice(2))) { html = projectPage(byId(r.slice(2))); key = "projects"; }
+  else if (r.startsWith("p-") && byId(r.slice(2))) {
+    const p = byId(r.slice(2)); html = projectPage(p); key = "projects";
+    // full-size photos of student projects load on demand (the list only carries the cover)
+    if (p.dyn && !p.full && FB) after = () => FB.getPhotos(p._id).then((ph) => { p.full = true; if (ph.length) { p.photos = ph; if (location.hash.slice(1) === r) route(true); } });
+  }
   else if (r.startsWith("g-") && GROUP[r.slice(2)]) { html = groupPage(GROUP[r.slice(2)]); key = "groups"; }
   else if (r.startsWith("s-")) {
     key = "students";
@@ -480,6 +487,7 @@ async function route(soft) {
   if (r === "me" && !S.user && $("rg-name")) fillNames($("rg-name"), $("rg-group").value, "");
   if (r === "mod" && S.scope) renderQueue();
   if (r === "action") runAction();
+  if (after) after();
 }
 function showMuseum(r) {
   const wasPage = !museumOn;
@@ -495,6 +503,7 @@ addEventListener("hashchange", () => route());
 
 /* ---------- auth state ---------- */
 if (FB) FB.onUser(async (u) => {
+  if (u?.isAnonymous) u = null; // anonymous accounts exist only to tie likes to a uid
   S.user = u; S.scope = FB.modScope(u); S.me = null;
   if (u) { try { S.me = await FB.getProfile(u.uid); } catch (e) {} }
   renderNav();
@@ -584,7 +593,7 @@ page.addEventListener("submit", async (e) => {
     }
     if (f.id === "profForm") {
       const file = $("pf-photo").files[0];
-      const photo = file ? await FB.compressImage(file, 400, 190000) : S.me?.photo || "";
+      const photo = file ? await FB.compressImage(file, 320, 60000) : S.me?.photo || "";
       const contacts = {};
       [["telegram", "telegram"], ["github", "github"], ["cemail", "email"], ["linkedin", "linkedin"], ["site", "site"]].forEach(([k, key]) => { const x = v("pf-" + k); if (x) contacts[key] = x; });
       const data = { name: v("pf-name") || S.me?.name, group: v("pf-group"), bio: v("pf-bio"), skills: v("pf-skills").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20), internship: $("pf-intern").checked, contacts, photo };
@@ -598,11 +607,13 @@ page.addEventListener("submit", async (e) => {
       const groups = [...f.querySelectorAll('[name="pj-g"]:checked')].map((x) => x.value);
       if (!groups.length) groups.push(S.me?.group || "mir-1");
       const files = [...$("pj-photos").files].slice(0, 3);
-      const photos = files.length ? await Promise.all(files.map((fl) => FB.compressImage(fl, 1100, 210000))) : editing?.photos || [];
+      // null keeps the stored photos; older projects with photos inside the project document get them moved out
+      const photos = files.length ? await Promise.all(files.map((fl) => FB.compressImage(fl, 1100, 210000))) : editing?.legacyPhotos ? editing.photos : null;
       const data = { title: v("pj-title"), desc: v("pj-desc"), group: groups[0], groups, type: v("pj-type"), stage: v("pj-stage"),
-        tags: v("pj-tags").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 12), authors: v("pj-authors"), photos,
+        tags: v("pj-tags").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 12), authors: v("pj-authors"),
         demo: v("pj-demo"), repo: v("pj-repo"), problem: v("pj-problem"), solution: v("pj-solution"), result: v("pj-result") };
-      await FB.saveProject(id || null, data, S.user.uid);
+      if (photos) data.cover = photos.length ? await FB.compressImage(files[0] || await (await fetch(photos[0])).blob(), 640, 90000) : "";
+      await FB.saveProject(id || null, data, S.user.uid, photos);
       toast(t("sent.review")); location.hash = "me";
     }
     if (f.id === "newsForm") {
@@ -650,6 +661,8 @@ $("menuBtn").addEventListener("click", () => { const o = $("nav").classList.togg
    3D museum: a night lab with neon lines and Kyrgyz ornament
    ============================================================ */
 const coarse = matchMedia("(pointer: coarse)").matches;
+// weak phones: no antialiasing or soft shadows, native-ish resolution
+const lowPower = coarse && ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4);
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const narrow = () => innerWidth < 720;
 let free = false, started = false, renderer = null, currentStop = -1;
@@ -718,14 +731,14 @@ async function startMuseum() {
   if (museumOn && /^#hall-\d+$/.test(location.hash)) goStop(Math.min(+location.hash.slice(6), N - 1), true);
 
   const canvas = $("scene");
-  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" }); }
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowPower, powerPreference: "high-performance" }); }
   catch (e) { $("loader").innerHTML = `<p class="err">WebGL недоступен, поэтому 3D-музей не открывается. Все проекты есть в разделе <a href="#projects">«${esc(t("nav.projects"))}»</a>.</p>`; return; }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, coarse ? 1.5 : 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, lowPower ? 1 : coarse ? 1.5 : 1.75));
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
-  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.enabled = !lowPower; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
 
   scene = new THREE.Scene();
