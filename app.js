@@ -711,8 +711,10 @@ async function startMuseum() {
   started = true;
   // wait briefly for approved student projects so they get their own halls
   await Promise.race([loadPromise, new Promise((r) => setTimeout(r, 3000))]);
-  const extra = S.dyn.filter((p) => p.photos?.length && p.type !== "idea").slice(0, Math.max(0, 14 - HALLS.length));
-  HALLS = [...extra, ...HALLS]; layout(); sizeTrack(); renderRail();
+  // the most liked projects take the first halls; ties keep the order: new student projects, then FEATURED
+  const pool = [...S.dyn.filter((p) => p.photos?.length && p.type !== "idea"), ...HALLS];
+  HALLS = pool.map((p, i) => [p, i]).sort((a, b) => (S.counts[b[0].id] || 0) - (S.counts[a[0].id] || 0) || a[1] - b[1]).map(([p]) => p).slice(0, 14);
+  layout(); sizeTrack(); renderRail();
   if (museumOn && /^#hall-\d+$/.test(location.hash)) goStop(Math.min(+location.hash.slice(6), N - 1), true);
 
   const canvas = $("scene");
