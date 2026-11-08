@@ -63,7 +63,7 @@ function errText(e) {
   if (/email-already-in-use/.test(c)) return t("err.exists");
   if (/weak-password/.test(c)) return t("err.weak");
   if (/photo-too-large/.test(c)) return t("err.photo");
-  return t("err.generic");
+  return t("err.generic") + (e?.code ? ` (${e.code})` : "");
 }
 const heart = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.7 4.5c2.1 0 3.6 1.2 4.3 2.4.7-1.2 2.2-2.4 4.3-2.4 3.7 0 5.8 3.9 4.3 7.3C19.5 16.4 12 21 12 21z"/></svg>`;
 const likeBtn = (id) => `<button type="button" class="likebtn" data-like="${esc(id)}" aria-pressed="${LIKED.has(id)}" title="${esc(LIKED.has(id) ? t("liked") : t("like"))}">${heart}<span>${S.counts[id] || 0}</span></button>`;

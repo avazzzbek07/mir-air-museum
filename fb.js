@@ -72,7 +72,14 @@ export async function saveProject(id, data, uid) {
 export const deleteProject = (id) => deleteDoc(doc(db, "projects", id));
 
 /* ---------- moderation ---------- */
+// Rules read email_verified from the ID token, which can predate the verification; refresh it first.
+async function freshToken() {
+  const u = auth.currentUser; if (!u) return;
+  const r = await u.getIdTokenResult();
+  if (!r.claims.email_verified) { await reload(u); await u.getIdToken(true); }
+}
 export async function modQueue(scope) {
+  await freshToken();
   const pend = (coll) => {
     const c = [where("status", "==", "pending")];
     if (scope !== "all") c.push(where("group", "==", scope));
@@ -81,7 +88,7 @@ export async function modQueue(scope) {
   const [profiles, projects] = await Promise.all([pend("profiles"), pend("projects")]);
   return { profiles, projects };
 }
-export const setStatus = (coll, id, status) => updateDoc(doc(db, coll, id), { status, updatedAt: serverTimestamp() });
+export async function setStatus(coll, id, status) { await freshToken(); return updateDoc(doc(db, coll, id), { status, updatedAt: serverTimestamp() }); }
 
 /* ---------- likes: one per device per project, counter raised in the same transaction ---------- */
 export function deviceId() {
@@ -105,7 +112,7 @@ export async function like(project) {
 }
 
 /* ---------- news ---------- */
-export const addNews = (data, email) => addDoc(collection(db, "news"), { ...data, author: email, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+export const addNews = async (data, email) => (await freshToken(), addDoc(collection(db, "news"), { ...data, author: email, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
 export const deleteNews = (id) => deleteDoc(doc(db, "news", id));
 
 /* ---------- images: resize in the browser and store as a compressed data URL ---------- */
