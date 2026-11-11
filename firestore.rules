@@ -14,7 +14,9 @@ service cloud.firestore {
 
     function moderators() {
       return {
-        'avazbek.madrakhimovw@gmail.com': 'all'
+        'avazbek.madrakhimovw@gmail.com': 'all',
+        'nkhmielan@gmail.com': 'mir-1',
+        'sigmaman1501@gmail.com': 'mir-2'
       };
     }
     function signedIn() { return request.auth != null; }

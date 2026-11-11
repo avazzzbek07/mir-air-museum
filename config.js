@@ -12,4 +12,6 @@ export const firebaseConfig = {
 // Keep this list identical to moderators() in firestore.rules; the rules are what actually grant access.
 export const MODERATORS = {
   "avazbek.madrakhimovw@gmail.com": "all",
+  "nkhmielan@gmail.com": "mir-1",
+  "sigmaman1501@gmail.com": "mir-2",
 };
