@@ -1,4 +1,5 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { PHOTO_MODELS, photoModel, batchMeshes } from "./models.js";
 import { t, getLang, setLang } from "./i18n.js";
 
 /* Firebase is optional at runtime: if it can't load, the site still works read-only from data.js. */
@@ -35,7 +36,7 @@ localizeContent();
 const GROUP = Object.fromEntries(GROUPS.map((g) => [g.id, g]));
 const BOT_URL = SITE.bot ? `https://t.me/${SITE.bot}` : "";
 const FEATURED = ["starys", "cyberbuddy", "esp32-mini-radar", "glove-mouse", "smartsprout", "pixie", "esp32-rc-car", "kamkor", "sunflower"];
-const MODEL = { kamkor: "kamkor", sunflower: "sunflower" };
+const MODEL = { ...Object.fromEntries(PHOTO_MODELS.map(id => [id, id])), kamkor: "kamkor", sunflower: "sunflower" };
 
 const S = { dyn: [], profiles: [], news: [], counts: {}, votes: {}, loaded: false, offline: !FB, user: null, me: null, scope: "" };
 let LIKED = new Set();
@@ -688,9 +689,8 @@ $("menuBtn").addEventListener("click", () => { const o = $("nav").classList.togg
    3D museum: a night lab with neon lines and Kyrgyz ornament
    ============================================================ */
 const coarse = matchMedia("(pointer: coarse)").matches;
-// weak phones (Android Chrome reports deviceMemory; ≤2 GB): no antialiasing or soft shadows, lower resolution.
-// hardwareConcurrency is not used: iPhones under-report it for privacy and would lose antialiasing.
-const lowPower = coarse && navigator.deviceMemory !== undefined && navigator.deviceMemory < 4;
+// Conservative defaults for limited RAM, data saving and devices without memory information.
+const lowPower = navigator.connection?.saveData || (navigator.deviceMemory !== undefined && navigator.deviceMemory <= 4) || (navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 4) || (coarse && navigator.deviceMemory === undefined);
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const narrow = () => innerWidth < 720;
 let free = false, started = false, renderer = null, currentStop = -1;
@@ -760,38 +760,38 @@ async function startMuseum() {
   if (museumOn && /^#hall-\d+$/.test(location.hash)) goStop(Math.min(+location.hash.slice(6), N - 1), true);
 
   const canvas = $("scene");
-  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowPower, powerPreference: "high-performance" }); }
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: !lowPower, powerPreference: lowPower ? "low-power" : "high-performance" }); }
   catch (e) { $("loader").innerHTML = `<p class="err">WebGL недоступен, поэтому 3D-музей не открывается. Все проекты есть в разделе <a href="#projects">«${esc(t("nav.projects"))}»</a>.</p>`; return; }
-  renderer.setPixelRatio(Math.min(devicePixelRatio, lowPower ? 1 : coarse ? 1.5 : 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, lowPower ? 1 : coarse ? 1.25 : 1.5));
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
-  renderer.shadowMap.enabled = !lowPower; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  renderer.shadowMap.enabled = !lowPower && !coarse; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const maxAniso = Math.min(renderer.capabilities.getMaxAnisotropy(), lowPower ? 2 : 4);
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(new THREE.Color("#070912"), 22, 95);
-  camera = new THREE.PerspectiveCamera(coarse && innerWidth < innerHeight ? 68 : 55, innerWidth / innerHeight, 0.1, 600);
+  scene.fog = new THREE.Fog(new THREE.Color("#070912"), lowPower ? 16 : 22, lowPower ? 50 : 95);
+  camera = new THREE.PerspectiveCamera(coarse && innerWidth < innerHeight ? 68 : 55, innerWidth / innerHeight, 0.1, lowPower ? 55 : 105);
   const CYAN = new THREE.Color("#5fd4e6"), GOLD = new THREE.Color("#e0b25a");
 
   /* night sky with a faint aurora band */
   const sky = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
     uniforms: { top: { value: new THREE.Color("#0b1238") }, mid: { value: new THREE.Color("#141a3a") }, bottom: { value: new THREE.Color("#05060c") } },
-    vertexShader: "varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }",
+    vertexShader: "varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position.z = gl_Position.w * 0.9999; }",
     fragmentShader: "uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; varying vec3 vP; void main(){ float h = vP.y; vec3 c = h > 0.0 ? mix(mid, top, pow(h, 0.5)) : mix(mid, bottom, min(-h*4.0,1.0)); float a = exp(-pow((h-0.35)*6.0,2.0)) * (0.5+0.5*sin(vP.x*9.0+vP.z*5.0)); c += vec3(0.05,0.22,0.24)*a*0.6; gl_FragColor = vec4(c,1.0);\n#include <colorspace_fragment>\n}",
   }));
   scene.add(sky);
-  {
+  if (!lowPower) {
     const pm = new THREE.PMREMGenerator(renderer); const env = new THREE.Scene(); env.add(sky.clone());
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshBasicMaterial({ color: "#2b3a66", side: THREE.DoubleSide }));
     panel.position.set(0, 250, 0); panel.rotation.x = Math.PI / 2; env.add(panel);
-    scene.environment = pm.fromScene(env, 0.04).texture; scene.environmentIntensity = 0.9;
+    scene.environment = pm.fromScene(env, 0.04).texture; scene.environmentIntensity = 0.9; pm.dispose(); panel.geometry.dispose(); panel.material.dispose();
   }
-  scene.add(new THREE.HemisphereLight("#6f86c9", "#0d0f1c", 1.1));
+  scene.add(new THREE.HemisphereLight("#6f86c9", "#0d0f1c", lowPower ? 1.8 : 1.1));
   sun = new THREE.DirectionalLight("#cfe6ff", 1.6);
-  sun.castShadow = true; sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
+  sun.castShadow = !lowPower && !coarse; sun.shadow.mapSize.set(coarse ? 1024 : 2048, coarse ? 1024 : 2048);
   Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 });
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03;
   scene.add(sun, sun.target);
@@ -914,6 +914,8 @@ async function startMuseum() {
   // a neon line down the centre of the floor, the "signal path" through the halls
   const path = mesh(new THREE.BoxGeometry(0.06, 0.01, len + 8), M.neon, 0, 0.006, mid - 3); path.castShadow = false;
 
+  batchMeshes(THREE, scene);
+
   /* rotunda with a tunduk (түндүк) crown overhead */
   const open = Math.asin(OUTER / RR);
   {
@@ -973,18 +975,6 @@ async function startMuseum() {
     const cone = mesh(new THREE.CylinderGeometry(0.9, 0.7, 1.6, 6, 1, true), new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false }), 0, 2.05, 0, g); cone.castShadow = false;
     animators.push((tm) => { halo.position.y = 2.85 + Math.sin(tm * 1.3 + x) * 0.06; halo.material.opacity = 0.4 + 0.2 * Math.sin(tm * 2 + z); });
   }
-  function lightbox(url) {
-    const g = new THREE.Group();
-    add(g, new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 8), M.gold), 0, 0.15, 0);
-    photo(url, (tx, ar) => {
-      const [w, h] = fit(ar, 1.25, 1.25), y = 0.3 + h / 2;
-      add(g, new THREE.Mesh(new THREE.BoxGeometry(w + 0.07, h + 0.07, 0.05), M.gold), 0, y, 0);
-      const face = new THREE.MeshStandardMaterial({ map: tx, emissive: "#ffffff", emissiveMap: tx, emissiveIntensity: 0.75, roughness: 0.6 });
-      const f1 = add(g, new THREE.Mesh(new THREE.PlaneGeometry(w, h), face), 0, y, 0.027);
-      const f2 = add(g, new THREE.Mesh(new THREE.PlaneGeometry(w, h), face), 0, y, -0.027); f2.rotation.y = Math.PI; f1.castShadow = f2.castShadow = false;
-    });
-    return g;
-  }
   const plastic = (hex) => new THREE.MeshStandardMaterial({ color: hex, roughness: 0.45 });
   const metal = new THREE.MeshStandardMaterial({ color: "#b9bcc6", roughness: 0.3, metalness: 0.8 });
   const pcb = new THREE.MeshStandardMaterial({ color: "#1f6b4a", roughness: 0.55 });
@@ -1039,13 +1029,15 @@ async function startMuseum() {
 
   HALLS.forEach((p, i) => {
     const side = i % 2 ? 1 : -1, z = EX_Z[i], x = side * 2.7;
-    pedestal(x, z);
     const kind = MODEL[p.id];
-    const item = kind ? model(kind) : lightbox(p.photos[0]);
+    if (kind) pedestal(x, z);
+    // New submissions without a hand-built model retain their photos on the wall only.
+    const item = photoModel(THREE, p.id) || (kind ? model(kind) : new THREE.Group());
+    item.name = `exhibit:${p.id}`;
     item.position.set(x, 1.16, z);
-    if (!kind) item.rotation.y = -side * 0.5;
+    item.rotation.y = -side * 0.35;
     scene.add(item);
-    if (kind === "kamkor" || !kind) spinning.push(item);
+    if (kind) spinning.push(item);
     const wallX = side * (OUTER - 0.02), rot = side * -Math.PI / 2;
     const wallImg = p.photos?.[1] || p.photos?.[0];
     if (wallImg) photo(wallImg, (tx, ar) => { const [w, h] = fit(ar, 2.6, 2.5); framed(tx, w, h, wallX, 3.0, z, rot); });
@@ -1094,7 +1086,7 @@ async function startMuseum() {
   prog = scrollProg();
   tourAt(prog, camera.position, camT); camera.lookAt(camT);
   renderer.compile(scene, camera);
-  requestAnimationFrame(() => { frameLoop(); setTimeout(() => $("loader").classList.add("done"), 250); });
+  requestAnimationFrame(() => { frameLoop(performance.now()); setTimeout(() => $("loader").classList.add("done"), 250); });
 }
 
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
@@ -1132,10 +1124,22 @@ function updateUI(p) {
   $("final").classList.toggle("on", !free && p > N - 1.35);
 }
 const tmpP = new THREE.Vector3(), tmpT = new THREE.Vector3(), camT = new THREE.Vector3(), fwd = new THREE.Vector3(), SUN_OFFSET = new THREE.Vector3(16, 30, 9);
-function frameLoop() {
+let lastFrame = 0, slowFrames = 0, qualityReduced = false;
+function frameLoop(stamp = performance.now()) {
   requestAnimationFrame(frameLoop);
+  if (!museumOn || document.hidden) { clock.getDelta(); lastFrame = 0; return; }
+  const interval = lowPower || qualityReduced ? 1000 / 30 : 1000 / 60;
+  if (lastFrame && stamp - lastFrame < interval - 1) return;
+  const elapsed = lastFrame ? stamp - lastFrame : interval;
+  lastFrame = stamp;
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (!museumOn) return;
+  // Sustained missed frames reduce GPU work once, without oscillating quality.
+  if (!qualityReduced && elapsed > 45) slowFrames++; else slowFrames = Math.max(0, slowFrames - 1);
+  if (!qualityReduced && slowFrames > 40) {
+    qualityReduced = true;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 0.85));
+    renderer.shadowMap.enabled = false;
+  }
   if (free) { walk(dt); updateUI(-1); }
   else {
     prog += (scrollProg() - prog) * (reduced ? 1 : 1 - Math.pow(0.0015, dt));
