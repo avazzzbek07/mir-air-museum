@@ -1,4 +1,5 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { escapeHtml as esc, safeUrl, contactUrl } from "./security.js";
 import { PHOTO_MODELS, photoModel, batchMeshes } from "./models.js";
 import { t, getLang, setLang } from "./i18n.js";
 
@@ -64,7 +65,6 @@ const loadPromise = (async () => {
   try {
     const d = await FB.loadPublic();
     S.dyn = d.projects.map(normalize).sort((a, b) => b.created - a.created);
-    S.profiles = d.profiles.sort((a, b) => a.name.localeCompare(b.name, "ru"));
     S.news = d.news; S.counts = d.counts; S.votes = d.votes;
   } catch (e) { console.warn(e); S.offline = true; }
   S.loaded = true;
@@ -75,8 +75,6 @@ const loadPromise = (async () => {
    Helpers
    ============================================================ */
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
 const plural = (n, a, b, c) => { if (getLang() !== "ru") return a; const m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 10 || h >= 20) ? b : c; };
 const initials = (name) => (name || "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 const fmtDate = (msv, opts = { day: "numeric", month: "long", year: "numeric" }) => new Date(msv).toLocaleDateString(getLang() === "ky" ? "ky-KG" : getLang() === "en" ? "en-GB" : "ru-RU", opts);
@@ -85,7 +83,7 @@ function errText(e) {
   const c = e?.code || e?.message || "";
   if (/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c)) return t("err.auth");
   if (/email-already-in-use/.test(c)) return t("err.exists");
-  if (/weak-password/.test(c)) return t("err.weak");
+  if (/weak-password|password-does-not-meet-requirements/.test(c)) return t("err.weak");
   if (/photo-too-large/.test(c)) return t("err.photo");
   if (/need-verify/.test(c)) return t("verify.need");
   return t("err.generic") + (e?.code ? ` (${e.code})` : "");
@@ -163,6 +161,7 @@ const PAGES = {
   students() {
     const skills = [...new Set(S.profiles.flatMap((p) => p.skills || []))].sort((a, b) => a.localeCompare(b));
     return `${head(esc(t("students.eyebrow")), t("students.title"), t("students.lead"))}${offlineNote()}
+    <div class="banner info"><span>${esc(t("students.privacy"))}</span><a class="btn" href="#me">${esc(t("nav.profile"))}</a></div>
     <div class="row"><span class="count">${S.profiles.length} / ${SITE.total} ${esc(t("students.filled"))}</span><a class="btn gold" href="#me">${esc(t("make.profile"))}</a></div>
     <section class="block"><div class="filters">
       <div class="field grow"><label for="sq">${esc(t("search"))}</label><input id="sq" type="search" value="${esc(sfilt.q)}" placeholder="Arduino, Python…"></div>
@@ -187,7 +186,7 @@ const PAGES = {
     <section class="block"><h2 class="sec">${esc(t("news.feed"))}</h2><div class="feed">
       ${feed.map((n) => `<div class="item"><div class="when">${esc(fmtDate(n.when))}</div><div><h3>${esc(n.title)}</h3><p>${esc(n.text)}</p>
         ${n.photo ? `<img src="${esc(n.photo)}" alt="" loading="lazy">` : ""}${safeUrl(n.link) ? `<p><a href="${esc(safeUrl(n.link))}" target="_blank" rel="noopener">${esc(t("n.link"))} →</a></p>` : ""}</div>
-        ${S.scope ? `<button type="button" class="btn danger" data-delnews="${esc(n._id)}">${esc(t("delete"))}</button>` : "<span></span>"}</div>`).join("")}
+        ${(S.scope === "all" || (S.scope && n.groups?.length === 1 && n.groups[0] === S.scope)) ? `<button type="button" class="btn danger" data-delnews="${esc(n._id)}">${esc(t("delete"))}</button>` : "<span></span>"}</div>`).join("")}
       <div class="item"><div class="when">${esc(t("final.eyebrow").split("·")[1] || "")}</div><div class="news">
         <img src="img/news-kabar.jpg" alt="${esc(kabar().title)}" loading="lazy">
         <div class="facts"><h3>${esc(kabar().title)}</h3>
@@ -238,7 +237,7 @@ const PAGES = {
           <div class="field full"><label for="rg-group">${esc(t("f.group"))}</label><select id="rg-group" required>${GROUPS.map((g) => `<option value="${esc(g.id)}">${esc(g.full)}</option>`).join("")}</select></div>
           <div class="field full"><label for="rg-name">${esc(t("you.are"))}</label><select id="rg-name" required></select></div>
           <div class="field full"><label for="rg-email">${esc(t("email"))}</label><input id="rg-email" type="email" required autocomplete="email"></div>
-          <div class="field full"><label for="rg-pass">${esc(t("password.new"))}</label><input id="rg-pass" type="password" required minlength="6" autocomplete="new-password"></div>
+          <div class="field full"><label for="rg-pass">${esc(t("password.new"))}</label><input id="rg-pass" type="password" required minlength="12" autocomplete="new-password"></div>
           <div class="full"><button class="btn solid" type="submit">${esc(t("register"))}</button></div></form>`}
       </div>`;
     }
@@ -264,6 +263,7 @@ const PAGES = {
     if (!FB) return `<div class="banner info">${esc(t("err.offline"))}</div>`;
     if (!S.user) return `${head(esc(t("nav.projects")), t("submit.title"))}<div class="banner"><span>${esc(t("need.login"))}</span><a class="btn solid" href="#me">${esc(t("login"))}</a></div>`;
     const p = editing || {};
+    if (S.me?.status !== "approved" && !S.scope) return `${head(esc(t("nav.projects")), t("submit.title"))}<div class="banner"><span>${esc(t("submit.approval"))}</span><a class="btn" href="#me">${esc(t("nav.profile"))}</a></div>`;
     if (!S.user.emailVerified) return `${head(esc(t("nav.projects")), t("submit.title"))}<div class="banner"><span>${esc(t("verify.need"))}</span><a class="btn solid" href="#me">${esc(t("nav.profile"))}</a></div>`;
     const gs = p.groups || [S.me?.group || "mir-1"];
     const opt = (v, cur, label) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(label)}</option>`;
@@ -317,6 +317,7 @@ const AT = {
 const at = (k) => (AT[getLang()] || AT.ru)[k];
 const ACT = (() => {
   const q = new URLSearchParams(location.search), mode = q.get("mode"), code = q.get("oobCode");
+  if (code) { const clean = new URL(location.href); for (const key of ["oobCode", "mode", "apiKey", "continueUrl"]) clean.searchParams.delete(key); history.replaceState(null, "", clean); }
   if (!mode || !code) return null;
   history.replaceState(null, "", location.pathname + "#action");
   return { mode, code, state: "busy", started: false, email: "" };
@@ -330,7 +331,7 @@ PAGES.action = () => {
     ${s === "bad" ? `<div class="banner bad"><span>${esc(at("bad"))}</span><a class="btn" href="#me">${esc(at("login"))}</a></div>` : ""}
     ${s === "done" ? `<div class="banner ok"><span>${esc(at("done"))}</span><a class="btn solid" href="#me">${esc(at("login"))}</a></div>` : ""}
     ${s === "form" ? `<form class="form authbox" id="resetForm"><p class="note full">${esc(at("for"))}: ${esc(ACT.email)}</p>
-      <div class="field full"><label for="rs-pass">${esc(t("password.new"))}</label><input id="rs-pass" type="password" required minlength="6" autocomplete="new-password"></div>
+      <div class="field full"><label for="rs-pass">${esc(t("password.new"))}</label><input id="rs-pass" type="password" required minlength="12" autocomplete="new-password"></div>
       <div class="full"><button class="btn solid" type="submit">${esc(at("setpass"))}</button></div></form>` : ""}`;
 };
 async function runAction() {
@@ -392,11 +393,11 @@ function studentPage(p) {
   const projects = ALL().filter((x) => (x.dyn && x.ownerUid === p._id) || (x.author || "").includes(surname));
   const c = p.contacts || {};
   const links = [
-    c.telegram && [`https://t.me/${c.telegram.replace(/^@|https?:\/\/t\.me\//g, "")}`, "Telegram"],
-    c.github && [/^https?:/.test(c.github) ? c.github : `https://github.com/${c.github.replace(/^@/, "")}`, "GitHub"],
-    c.linkedin && [/^https?:/.test(c.linkedin) ? c.linkedin : `https://www.linkedin.com/in/${c.linkedin}`, "LinkedIn"],
-    c.site && [/^https?:/.test(c.site) ? c.site : `https://${c.site}`, t("p.site")],
-  ].filter(Boolean);
+    [contactUrl("telegram", c.telegram), "Telegram"],
+    [contactUrl("github", c.github), "GitHub"],
+    [contactUrl("linkedin", c.linkedin), "LinkedIn"],
+    [contactUrl("site", c.site), t("p.site")],
+  ].filter(([url]) => url);
   return `<a class="back" href="#students">${esc(t("back.students"))}</a>
   <div class="person">${avatar(p, true)}<div class="facts">
     <div class="eyebrow">${esc(GROUP[p.group]?.full || "")}${m?.team && !GROUP[p.group]?.flat ? ` · ${esc(m.team)}` : ""}${m?.role ? ` · ${esc(ROLE_RU[m.role] || "")}` : ""}${m?.lead ? ` · ${esc(t("teamlead"))}` : ""}</div>
@@ -451,14 +452,16 @@ async function renderMyProjects() {
   } catch (e) { box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`; }
 }
 async function renderQueue() {
+  const revision = authRevision;
   try {
     const q = await FB.modQueue(S.scope);
+    if (revision !== authRevision || !$("qProfiles") || !$("qProjects")) return;
     const act = (coll, id) => `<div class="row"><button class="btn solid" type="button" data-mod="${coll}" data-id="${esc(id)}" data-st="approved">${esc(t("approve"))}</button><button class="btn danger" type="button" data-mod="${coll}" data-id="${esc(id)}" data-st="rejected">${esc(t("reject"))}</button></div>`;
     $("qProfiles").innerHTML = q.profiles.map((p) => `<div class="qitem">${p.photo ? `<img src="${esc(p.photo)}" alt="">` : `<div class="ph"></div>`}<div><h3>${esc(p.name)} · ${esc(gname(p.group))}</h3>
       <p>${esc(p.bio || "")}</p><div class="tags" style="margin-top:6px">${(p.skills || []).map((x) => `<span>${esc(x)}</span>`).join("")}</div></div>${act("profiles", p._id)}</div>`).join("") || `<div class="empty">${esc(t("mod.empty"))}</div>`;
     $("qProjects").innerHTML = q.projects.map((d) => `<div class="qitem">${d.cover || d.photos?.[0] ? `<img src="${esc(d.cover || d.photos[0])}" alt="">` : `<div class="ph"></div>`}<div><h3>${esc(d.title)} · ${esc((d.groups || []).map(gname).join(" + "))}</h3>
       <p>${esc(d.desc)}</p><p>${esc(t("by"))}: ${esc(d.authors)}</p>${[d.problem, d.solution, d.result].filter(Boolean).map((x) => `<p>${esc(x)}</p>`).join("")}</div>${act("projects", d._id)}</div>`).join("") || `<div class="empty">${esc(t("mod.empty"))}</div>`;
-  } catch (e) { $("qProfiles").innerHTML = $("qProjects").innerHTML = `<div class="empty">${esc(errText(e))}</div>`; }
+  } catch (e) { if (revision !== authRevision || !$("qProfiles") || !$("qProjects")) return; $("qProfiles").innerHTML = $("qProjects").innerHTML = `<div class="empty">${esc(errText(e))}</div>`; }
 }
 
 /* ============================================================
@@ -530,14 +533,29 @@ function showMuseum(r) {
 addEventListener("hashchange", () => route());
 
 /* ---------- auth state ---------- */
-if (FB) FB.onUser(async (u) => {
-  if (u?.isAnonymous) u = null; // anonymous accounts exist only to tie likes to a uid
-  S.user = u; S.scope = FB.modScope(u); S.me = null;
-  if (u) { try { S.me = await FB.getProfile(u.uid); } catch (e) {} }
+let authRevision = 0;
+async function syncUser(u) {
+  const revision = ++authRevision;
+  if (u?.isAnonymous) u = null;
+  S.user = u; S.scope = FB.modScope(u); S.me = null; S.profiles = []; editing = null;
+  // Clear private DOM immediately; stale asynchronous requests must not restore it after logout.
+  if (!u) $("page").replaceChildren();
   renderNav();
-  const h = location.hash.slice(1);
-  if (!museumOn && (/^(me|mod|submit|s-|p-)/.test(h) || h === "news")) route(true);
-});
+  if (!museumOn) route(true);
+  if (u) {
+    try {
+      const own = await FB.getProfile(u.uid);
+      if (revision !== authRevision) return;
+      S.me = own;
+      const profiles = await FB.visibleProfiles(u, own);
+      if (revision !== authRevision) return;
+      S.profiles = profiles.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+    } catch (e) { console.warn("Profile access unavailable", e.code); }
+  }
+  if (revision !== authRevision) return;
+  renderNav();
+  if (!museumOn) route(true);
+}
 
 /* ============================================================
    Page interactions (delegated)
@@ -581,7 +599,7 @@ page.addEventListener("click", async (e) => {
   }
   if (e.target.id === "logout") { await FB.logout(); location.hash = "top"; }
   if (e.target.id === "resend") { try { await FB.resendVerification(); toast(t("verify.sent")); } catch (err) { toast(errText(err)); } }
-  if (e.target.id === "recheck") { const u = await FB.refreshUser(); S.user = u; S.scope = FB.modScope(u); route(true); }
+  if (e.target.id === "recheck") { const u = await FB.refreshUser(); await syncUser(u); }
   const mb = e.target.closest("[data-mod]");
   if (mb) {
     mb.disabled = true;
@@ -615,7 +633,9 @@ page.addEventListener("submit", async (e) => {
       if (!name) { $("rg-name").focus(); busy(false); return; }
       const u = await FB.signUp(v("rg-email"), $("rg-pass").value);
       await FB.saveProfile(u.uid, { name, group, bio: "", skills: [], internship: false, contacts: {}, photo: "" }, true);
-      S.me = await FB.getProfile(u.uid);
+      const registeredProfile = await FB.getProfile(u.uid);
+      if (S.user?.uid !== u.uid) return;
+      S.me = registeredProfile;
       toast(t("verify.need"));
       route(true);
     }
@@ -626,8 +646,11 @@ page.addEventListener("submit", async (e) => {
       [["telegram", "telegram"], ["github", "github"], ["cemail", "email"], ["linkedin", "linkedin"], ["site", "site"]].forEach(([k, key]) => { const x = v("pf-" + k); if (x) contacts[key] = x; });
       const data = { name: v("pf-name") || S.me?.name, group: v("pf-group"), bio: v("pf-bio"), skills: v("pf-skills").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20), internship: $("pf-intern").checked, contacts, photo };
       if (!data.name) { $("pf-name").focus(); busy(false); return; }
-      await FB.saveProfile(S.user.uid, data, !S.me);
-      S.me = await FB.getProfile(S.user.uid);
+      const profileUid = S.user.uid;
+      await FB.saveProfile(profileUid, data, !S.me);
+      const updatedProfile = await FB.getProfile(profileUid);
+      if (S.user?.uid !== profileUid) return;
+      S.me = updatedProfile;
       toast(t("saved")); route(true);
     }
     if (f.id === "projForm") {
@@ -660,6 +683,7 @@ function updateIdea() { if ($("idea-out")) $("idea-out").value = $("idea-title")
 
 async function doLike(id) {
   if (LIKED.has(id) || !FB) return;
+  if (!S.user?.emailVerified || S.me?.status !== "approved") { toast(t("like.student")); return; }
   const btns = () => document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`);
   btns().forEach((b) => (b.disabled = true));
   try {
@@ -1154,3 +1178,4 @@ function frameLoop(stamp = performance.now()) {
 
 applyI18n();
 route();
+if (FB) FB.onUser(syncUser);

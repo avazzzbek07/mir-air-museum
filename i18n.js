@@ -239,6 +239,35 @@ const D = {
   },
 };
 
+// Profile privacy is enforced by Firestore rules, including direct API access.
+Object.assign(D.ru, {
+  "students.lead": "Полные анкеты доступны самому студенту и старосте его группы.",
+  "students.privacy": "Анкеты и контакты закрыты от посетителей. Студент видит свою анкету, староста — анкеты своей группы.",
+  "p.contacts.hint": "Контакты видны только вам, старосте вашей группы и главному администратору.",
+  "profile.status.approved": "Анкета одобрена. Контакты остаются закрытыми от посетителей.",
+  "like.student": "Лайки доступны после входа, подтверждения почты и одобрения анкеты старостой.",
+  "submit.approval": "Перед добавлением проекта подтвердите почту и дождитесь одобрения анкеты старостой.",
+  "err.weak": "Используйте пароль длиной не менее 12 символов.",
+});
+Object.assign(D.ky, {
+  "students.lead": "Толук анкетаны студент өзү жана өз тайпасынын старостасы көрө алат.",
+  "students.privacy": "Анкеталар жана байланыштар конокторго жабык. Студент өз анкетасын, староста өз тайпасынын анкеталарын көрөт.",
+  "p.contacts.hint": "Байланыштарды сиз, тайпаңыздын старостасы жана башкы администратор гана көрөт.",
+  "profile.status.approved": "Анкета жактырылды. Байланыштар конокторго жабык бойдон калат.",
+  "like.student": "Лайк коюу үчүн кириңиз, почтаңызды ырастап, анкетаңыздын жактырылышын күтүңүз.",
+  "submit.approval": "Долбоор кошуудан мурун почтаңызды ырастап, анкетаңыздын жактырылышын күтүңүз.",
+  "err.weak": "Кеминде 12 белгиден турган сырсөз колдонуңуз.",
+});
+Object.assign(D.en, {
+  "students.lead": "Full profiles are visible to their owner and their group moderator.",
+  "students.privacy": "Profiles and contacts are private. Students see their own profile; moderators see their group's profiles.",
+  "p.contacts.hint": "Only you, your group moderator and the administrator can see these contacts.",
+  "profile.status.approved": "Profile approved. Contacts remain private from visitors.",
+  "like.student": "Sign in, verify your email and have your profile approved to like projects.",
+  "submit.approval": "Verify your email and have your profile approved before submitting a project.",
+  "err.weak": "Use a password with at least 12 characters.",
+});
+
 export const LANGS = ["ru", "ky", "en"];
 let lang = "ru";
 try { const v = localStorage.getItem("mirair-lang"); if (LANGS.includes(v)) lang = v; } catch (e) {}

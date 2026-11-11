@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-  sendEmailVerification, sendPasswordResetEmail, signOut, reload, signInAnonymously,
+  sendEmailVerification, sendPasswordResetEmail, signOut, reload,
   applyActionCode, verifyPasswordResetCode, confirmPasswordReset,
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
 import {
@@ -42,15 +42,24 @@ export function modScope(user) {
 const rows = (snap) => snap.docs.map((d) => ({ _id: d.id, ...d.data() }));
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 export async function loadPublic() {
-  const [projects, profiles, news, likeDocs] = await withTimeout(Promise.all([
+  const [projects, news, likeDocs] = await withTimeout(Promise.all([
     getDocs(query(collection(db, "projects"), where("status", "==", "approved"))).then(rows),
-    getDocs(query(collection(db, "profiles"), where("status", "==", "approved"))).then(rows),
     getDocs(collection(db, "news")).then(rows),
     getDocs(collection(db, "likeCounts")).then((s) => s.docs.map((d) => [d.id, d.data()])),
   ]), 8000);
   const counts = Object.fromEntries(likeDocs.map(([id, d]) => [id, d.n || 0]));
   const votes = Object.fromEntries(likeDocs.map(([id, d]) => [id, d.v || 0]));
-  return { projects, profiles, news, counts, votes };
+  return { projects, news, counts, votes };
+}
+
+// Profile queries are available only to moderators; everyone else can read only their own document.
+export async function visibleProfiles(user, ownProfile) {
+  const scope = modScope(user);
+  if (!scope) return ownProfile?.status === "approved" ? [ownProfile] : [];
+  await freshToken();
+  const constraints = [where("status", "==", "approved")];
+  if (scope !== "all") constraints.push(where("group", "==", scope));
+  return rows(await getDocs(query(collection(db, "profiles"), ...constraints)));
 }
 
 /* ---------- profiles ---------- */
@@ -120,12 +129,11 @@ export async function modQueue(scope) {
 export async function setStatus(coll, id, status) { await freshToken(); return updateDoc(doc(db, coll, id), { status, updatedAt: serverTimestamp() }); }
 
 /* ---------- likes: one per account per project, counter raised in the same transaction ----------
-   Visitors without an account get an anonymous Firebase account on their first like, so every like
-   is tied to a uid the rules can check instead of a code the browser makes up. */
+   Only approved students may vote; anonymous accounts cannot write to the database. */
 // `student` must match student() in firestore.rules: a confirmed email and an approved profile.
 export async function like(project, student) {
-  if (!auth.currentUser) await signInAnonymously(auth);
-  if (student) await freshToken();
+  await needVerified();
+  if (!student) { const e = new Error("student-required"); e.code = "student-required"; throw e; }
   const device = auth.currentUser.uid;
   const likeRef = doc(db, "likes", `${project}_${device}`), cRef = doc(db, "likeCounts", project);
   return runTransaction(db, async (tx) => {

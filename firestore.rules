@@ -4,7 +4,7 @@ rules_version = '2';
 //   profiles/{uid}   student profile; the owner edits, the group's starosta approves
 //   projects/{id}    project submitted by a student (text + small cover); the group's starosta approves
 //   projectPhotos/{id} full-size photos of projects/{id}, loaded only on the project page
-//   likes/{id}       one like per account per project (id = projectId + "_" + uid; visitors get an anonymous account)
+//   likes/{id}       one like per account per project (id = projectId + "_" + uid; approved students only)
 //   likeCounts/{id}  like counter per project
 //   news/{id}        news and events, written by starostas
 //
@@ -20,7 +20,8 @@ service cloud.firestore {
       };
     }
     function signedIn() { return request.auth != null; }
-    function verified() { return signedIn() && request.auth.token.email_verified == true; }
+    function emailAccount() { return signedIn() && request.auth.token.firebase.sign_in_provider == 'password'; }
+    function verified() { return emailAccount() && request.auth.token.email_verified == true; }
     function modScope() {
       return verified() && request.auth.token.email in moderators()
         ? moderators()[request.auth.token.email] : '';
@@ -31,7 +32,35 @@ service cloud.firestore {
     function groupId(g) { return g in ['mir-1', 'mir-2', 'mir-3']; }
     function str(v, max) { return v is string && v.size() <= max; }
     function optStr(d, k, max) { return !(k in d) || str(d[k], max); }
-    function strList(v, maxItems) { return v is list && v.size() <= maxItems; }
+    function strList(v, maxItems) {
+      return v is list && v.size() <= maxItems
+        && (v.size() <= 0 || (str(v[0], 40) && v[0].size() > 0))
+        && (v.size() <= 1 || (str(v[1], 40) && v[1].size() > 0))
+        && (v.size() <= 2 || (str(v[2], 40) && v[2].size() > 0))
+        && (v.size() <= 3 || (str(v[3], 40) && v[3].size() > 0))
+        && (v.size() <= 4 || (str(v[4], 40) && v[4].size() > 0))
+        && (v.size() <= 5 || (str(v[5], 40) && v[5].size() > 0))
+        && (v.size() <= 6 || (str(v[6], 40) && v[6].size() > 0))
+        && (v.size() <= 7 || (str(v[7], 40) && v[7].size() > 0))
+        && (v.size() <= 8 || (str(v[8], 40) && v[8].size() > 0))
+        && (v.size() <= 9 || (str(v[9], 40) && v[9].size() > 0))
+        && (v.size() <= 10 || (str(v[10], 40) && v[10].size() > 0))
+        && (v.size() <= 11 || (str(v[11], 40) && v[11].size() > 0))
+        && (v.size() <= 12 || (str(v[12], 40) && v[12].size() > 0))
+        && (v.size() <= 13 || (str(v[13], 40) && v[13].size() > 0))
+        && (v.size() <= 14 || (str(v[14], 40) && v[14].size() > 0))
+        && (v.size() <= 15 || (str(v[15], 40) && v[15].size() > 0))
+        && (v.size() <= 16 || (str(v[16], 40) && v[16].size() > 0))
+        && (v.size() <= 17 || (str(v[17], 40) && v[17].size() > 0))
+        && (v.size() <= 18 || (str(v[18], 40) && v[18].size() > 0))
+        && (v.size() <= 19 || (str(v[19], 40) && v[19].size() > 0));
+    }
+    function groupsOk(v) {
+      return v is list && v.size() >= 1 && v.size() <= 3
+        && v.toSet().hasOnly(['mir-1', 'mir-2', 'mir-3']) && v.toSet().size() == v.size();
+    }
+    function webLink(v) { return str(v, 300) && (v == '' || v.matches('^https?://[^\\s]+$')); }
+    function optionalLink(d, k) { return !(k in d) || webLink(d[k]); }
     // a compressed JPEG data URL; Firestore documents are capped at 1 MiB in total
     function photo(v, max) { return v is string && v.size() <= max && (v.size() == 0 || v.matches('^data:image/(jpeg|png|webp);base64,.*')); }
     function photoList(l, max) {
@@ -53,14 +82,14 @@ service cloud.firestore {
         && contactsOk(d.contacts)
         && photo(d.photo, 200000)
         && d.status in ['pending', 'approved', 'rejected']
-        && d.updatedAt == request.time;
+        && d.createdAt is timestamp && d.updatedAt == request.time;
     }
     match /profiles/{uid} {
-      allow read: if resource.data.status == 'approved'
-        || (signedIn() && request.auth.uid == uid)
-        || modOf(resource.data.group);
+      // Full profiles contain contact details: never expose them to the public directory.
+      allow get: if (emailAccount() && request.auth.uid == uid) || modOf(resource.data.group);
+      allow list: if modOf(resource.data.group);
       // the owner creates at sign-up (email not confirmed yet) and edits once confirmed; every edit goes back to review
-      allow create: if signedIn() && request.auth.uid == uid
+      allow create: if emailAccount() && request.auth.uid == uid
         && validProfile(request.resource.data) && request.resource.data.status == 'pending'
         && request.resource.data.createdAt == request.time;
       allow update: if verified() && request.auth.uid == uid
@@ -69,8 +98,8 @@ service cloud.firestore {
       // the starosta of the group approves or rejects without touching the content
       allow update: if modOf(resource.data.group)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-        && request.resource.data.status in ['pending', 'approved', 'rejected'];
-      allow delete: if (signedIn() && request.auth.uid == uid) || modOf(resource.data.group);
+        && validProfile(request.resource.data);
+      allow delete: if (verified() && request.auth.uid == uid) || modOf(resource.data.group);
     }
 
     // ---------- projects ----------
@@ -78,23 +107,23 @@ service cloud.firestore {
       return d.keys().hasOnly(['title', 'desc', 'group', 'groups', 'type', 'stage', 'tags', 'authors', 'photos', 'cover', 'demo', 'repo', 'problem', 'solution', 'result', 'ownerUid', 'status', 'createdAt', 'updatedAt'])
         && str(d.title, 120) && d.title.size() > 2
         && str(d.desc, 600)
-        && groupId(d.group) && d.groups is list && d.groups.size() >= 1 && d.groups.size() <= 3 && d.groups[0] == d.group
+        && groupId(d.group) && groupsOk(d.groups) && d.groups[0] == d.group
         && d.type in ['project', 'demo', 'site', 'idea']
         && d.stage in ['idea', 'work', 'demo']
         && strList(d.tags, 12)
         && str(d.authors, 300)
         && (!('photos' in d) || photoList(d.photos, 220000))
         && (!('cover' in d) || photo(d.cover, 100000))
-        && optStr(d, 'demo', 300) && optStr(d, 'repo', 300)
+        && optionalLink(d, 'demo') && optionalLink(d, 'repo')
         && optStr(d, 'problem', 800) && optStr(d, 'solution', 1200) && optStr(d, 'result', 800)
         && d.status in ['pending', 'approved', 'rejected']
-        && d.updatedAt == request.time;
+        && d.createdAt is timestamp && d.updatedAt == request.time;
     }
     match /projects/{id} {
       allow read: if resource.data.status == 'approved'
         || (signedIn() && request.auth.uid == resource.data.ownerUid)
         || modOf(resource.data.group);
-      allow create: if verified() && validProject(request.resource.data)
+      allow create: if (student() || isMod()) && validProject(request.resource.data)
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.createdAt == request.time;
@@ -105,8 +134,8 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt;
       allow update: if modOf(resource.data.group)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-        && request.resource.data.status in ['pending', 'approved', 'rejected'];
-      allow delete: if (signedIn() && request.auth.uid == resource.data.ownerUid) || modOf(resource.data.group);
+        && validProject(request.resource.data);
+      allow delete: if (verified() && request.auth.uid == resource.data.ownerUid) || modOf(resource.data.group);
     }
 
     match /projectPhotos/{id} {
@@ -117,8 +146,13 @@ service cloud.firestore {
       // written in the same batch as the project itself
       allow create, update: if verified()
         && getAfter(/databases/$(database)/documents/projects/$(id)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/projects/$(id)).data.status == 'pending'
+        && getAfter(/databases/$(database)/documents/projects/$(id)).data.updatedAt == request.time
         && request.resource.data.keys().hasOnly(['photos']) && photoList(request.resource.data.photos, 220000);
-      allow delete: if (signedIn() && request.auth.uid == proj().ownerUid) || modOf(proj().group);
+      allow delete: if modOf(proj().group) || (verified() && request.auth.uid == proj().ownerUid
+        && (!existsAfter(/databases/$(database)/documents/projects/$(id))
+          || (getAfter(/databases/$(database)/documents/projects/$(id)).data.status == 'pending'
+            && getAfter(/databases/$(database)/documents/projects/$(id)).data.updatedAt == request.time)));
     }
 
     // ---------- likes ----------
@@ -134,7 +168,7 @@ service cloud.firestore {
     // `device` holds the uid (the field kept its old name so earlier likes stay valid).
     match /likes/{likeId} {
       allow get: if signedIn() && likeId.matches('.*_' + request.auth.uid + '$');
-      allow create: if signedIn()
+      allow create: if student()
         && request.resource.data.keys().hasOnly(['project', 'device', 'at'])
         && request.resource.data.device == request.auth.uid
         && str(request.resource.data.project, 80)
@@ -145,11 +179,12 @@ service cloud.firestore {
     // Per-project counters. Each +1 must arrive in the same batch as a brand-new like
     // document from the account named in `last`, so a counter can't be raised without a like.
     function newLike(project, device) {
-      return signedIn() && device == request.auth.uid
+      return student() && device == request.auth.uid
         && existsAfter(/databases/$(database)/documents/likes/$(project + '_' + device))
         && !exists(/databases/$(database)/documents/likes/$(project + '_' + device));
     }
-    // `n` counts every like; `v` counts likes from students (confirmed email + approved profile)
+    // Legacy counters are preserved; new likes require a confirmed email and approved profile.
+    // `n` counts historical likes; `v` counts student likes
     // and is what orders the museum halls, so anonymous likes can't push a project forward.
     function student() {
       return verified() && request.auth.token.firebase.sign_in_provider != 'anonymous'
@@ -168,16 +203,28 @@ service cloud.firestore {
     }
 
     // ---------- news and events ----------
+    function newsScope(d) {
+      return isMod() && (modScope() == 'all' || d.groups == [modScope()]);
+    }
+    function validNews(d) {
+      return d.keys().hasOnly(['kind', 'title', 'text', 'date', 'place', 'link', 'photo', 'groups', 'author', 'createdAt', 'updatedAt'])
+        && d.kind in ['news', 'event']
+        && str(d.title, 140) && d.title.size() > 2 && str(d.text, 2000)
+        && d.date is timestamp && d.createdAt is timestamp && d.updatedAt == request.time
+        && d.groups is list && (d.groups.size() == 0 || groupsOk(d.groups))
+        && str(d.author, 254)
+        && optStr(d, 'place', 140) && optionalLink(d, 'link')
+        && (!('photo' in d) || photo(d.photo, 400000));
+    }
     match /news/{id} {
       allow read: if true;
-      allow create, update: if isMod()
-        && request.resource.data.keys().hasOnly(['kind', 'title', 'text', 'date', 'place', 'link', 'photo', 'groups', 'author', 'createdAt', 'updatedAt'])
-        && request.resource.data.kind in ['news', 'event']
-        && str(request.resource.data.title, 140) && str(request.resource.data.text, 2000)
-        && request.resource.data.date is timestamp
-        && optStr(request.resource.data, 'place', 140) && optStr(request.resource.data, 'link', 300)
-        && (!('photo' in request.resource.data) || photo(request.resource.data.photo, 400000));
-      allow delete: if isMod();
+      allow create: if newsScope(request.resource.data) && validNews(request.resource.data)
+        && request.resource.data.author == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
+      allow update: if newsScope(resource.data) && newsScope(request.resource.data) && validNews(request.resource.data)
+        && request.resource.data.author == resource.data.author
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if newsScope(resource.data);
     }
   }
 }
